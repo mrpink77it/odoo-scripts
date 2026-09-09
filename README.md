@@ -1,4 +1,4 @@
-# Odoo & OCA Enterprise Deployer (Bare-Metal)
+# Odoo & OCA Deployer
 
 ![OS](https://img.shields.io/badge/OS-Ubuntu%20%7C%20Debian-blue)
 ![Odoo](https://img.shields.io/badge/Odoo-15.0%20%7C%2016.0%20%7C%2017.0%20%7C%2018.0-purple)
