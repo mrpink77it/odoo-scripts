@@ -28,7 +28,7 @@ Questo tool è progettato specificamente per infrastrutture di produzione dove l
 
 ## 🛠️ Utilizzo
 
-1. Clona il repository o scarica lo script sul tuo server:
+1. Scarica lo script sulla tua macchina
    ```bash
    git clone [https://github.com/tuo-utente/odoo-oca-deployer.git](https://github.com/tuo-utente/odoo-oca-deployer.git)
    cd odoo-oca-deployer
