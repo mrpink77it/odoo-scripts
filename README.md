@@ -28,23 +28,12 @@ Questo tool è progettato specificamente per infrastrutture di produzione dove l
 
 ## 🛠️ Utilizzo
 
-1. Scarica lo script sulla tua macchina
-   ```bash
-   git clone [https://github.com/tuo-utente/odoo-oca-deployer.git](https://github.com/tuo-utente/odoo-oca-deployer.git)
-   cd odoo-oca-deployer
-   ```
+Esegui il comando nella tua shell
 
-2. Rendi lo script eseguibile:
    ```bash
-   chmod +x odoo_setup.sh
+   sudo apt install git -y && git clone https://github.com/mrpink77it/odoo-scripts.git && cd odoo-scripts && sudo chmod +x *.sh && sudo ./install_odoo_oca.sh
    ```
-
-3. Esegui l'installer con i privilegi di root:
-   ```bash
-   sudo ./odoo_setup.sh
-   ```
-
-4. Segui le istruzioni a schermo per selezionare la versione di Odoo e i repository OCA desiderati.
+Segui le istruzioni a schermo per selezionare la versione di Odoo e i repository OCA desiderati.
 
 ---
 
