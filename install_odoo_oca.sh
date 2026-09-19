@@ -33,7 +33,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo -e "${BLUE}======================================================================${NC}"
-echo -e "${GREEN}    Odoo & OCA Enterprise Installer (Ubuntu/Debian Bare-Metal)${NC}"
+echo -e "${GREEN}   Installer Odoo OCA/l10n-italy e OCA (Ubuntu/Debian Bare-Metal)${NC}"
 echo -e "${BLUE}======================================================================${NC}"
 
 # ------------------------------------------------------------------------------
