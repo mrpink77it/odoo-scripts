@@ -37,7 +37,7 @@ Segui le istruzioni a schermo per selezionare la versione di Odoo e i repository
 
 ---
 
-## 🧠 Logica di Funzionamento (Sotto il cofano)
+## 🧠 Logica di Funzionamento 
 
 Lo script non si limita a installare i pacchetti, ma orchestra l'intero ambiente seguendo una logica in 6 fasi:
 
