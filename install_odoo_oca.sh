@@ -300,7 +300,7 @@ User=$OE_USER
 Group=$OE_USER
 Environment="LANG=en_US.UTF-8"
 Environment="LC_ALL=en_US.UTF-8"
-ExecStart=$PYTHON_CMD $OE_HOME_EXT/odoo-bin -c$OE_CONFIG
+ExecStart=$PYTHON_CMD $OE_HOME_EXT/odoo-bin -c $OE_CONFIG
 KillMode=mixed
 StandardOutput=journal+console
 
