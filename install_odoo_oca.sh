@@ -135,7 +135,8 @@ fi
 # ==============================================================================
 # 2. UTENTI E TUNING POSTGRESQL
 # ==============================================================================
-if ! id -u $OE_USER > /dev/null 2>&1; then useradd -m -U -r -d $OE_HOME -s /bin/bash$OE_USER; fi
+if ! id -u $OE_USER > /dev/null 2>&1; then useradd -m -U -r -d $OE_HOME -s /bin/bash $OE_USER; fi
+
 
 PG_VERSION=$(pg_lsclusters -h | awk '{print $1}')
 if [ -n "$PG_VERSION" ]; then
