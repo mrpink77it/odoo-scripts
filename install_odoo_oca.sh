@@ -27,6 +27,9 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+apt install sudo #se debian installa sudo
+sudo apt update && sudo apt upgrade -y
+
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}Errore: Questo script deve essere eseguito come root (sudo).${NC}"
   exit 1
