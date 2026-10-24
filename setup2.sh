@@ -178,25 +178,41 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
             sudo -u "$OE_USER" "$PIP_CMD" install -r requirements.txt $(eval echo $QUIET) || true
         fi
 
-        echo -e "\n${BLUE}>>> [5/6] Avvio Odoo in modalità aggiornamento globale (-u all) con tail del log...${NC}"
+echo -e "\n${BLUE}>>> [5/6] Avvio Odoo in modalità aggiornamento globale (-u all)...${NC}"
         touch /var/log/odoo/odoo.log
         chown "$OE_USER:$OE_USER" /var/log/odoo/odoo.log
         
+        # Avvia Odoo in background
         sudo -u "$OE_USER" "$PYTHON_CMD" "$OE_HOME_EXT/odoo-bin" -c "$OE_CONFIG" -u all &
         ODOO_PID=$!
 
-        tail -f /var/log/odoo/odoo.log &
-        TAIL_PID=$!
+        echo -e "${YELLOW}Monitoraggio log in corso (gli errori appariranno in rosso a video)...${NC}"
 
+        # Avvia un monitor in tempo reale che filtra e colora gli errori
+        tail -n 0 -F /var/log/odoo/odoo.log 2>/dev/null | while read -r line; do
+            if echo "$line" | grep -q -E "ERROR|CRITICAL|Traceback|Exception"; then
+                echo -e "${RED}[ERRORE RILEVATO] $line${NC}"
+            elif echo "$line" | grep -q -E "HTTP service running|Modules loaded"; then
+                echo -e "${GREEN}[COMPLETATO] $line${NC}"
+                break
+            elif echo "$line" | grep -q "loading "; then
+                # Mostra il modulo in fase di caricamento (opzionale, pulito)
+                echo -e "${BLUE}->${NC} $line"
+            fi
+        done &
+        MONITOR_PID=$!
+
+        # Attende che il processo principale di Odoo termini l'aggiornamento o il caricamento
         while kill -0 $ODOO_PID 2>/dev/null; do
-            if grep -q "HTTP service running" /var/log/odoo/odoo.log 2>/dev/null || grep -q "Modules loaded" /var/log/odoo/odoo.log 2>/dev/null; then
-                sleep 5
+            if grep -q -E "HTTP service running|Modules loaded" /var/log/odoo/odoo.log 2>/dev/null; then
+                sleep 3
                 break
             fi
             sleep 2
         done
 
-        kill $TAIL_PID 2>/dev/null || true
+        # Pulizia dei processi di monitoraggio e Odoo
+        kill $MONITOR_PID 2>/dev/null || true
         kill $ODOO_PID 2>/dev/null || true
         wait $ODOO_PID 2>/dev/null || true
 
