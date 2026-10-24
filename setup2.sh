@@ -1,4 +1,8 @@
 #!/bin/bash
+# ==============================================================================
+# INSTALLER ODOO + ALL-IN-ONE OCA INDEXER & SYNC (Bare-Metal Ubuntu/Debian)
+# Con supporto per --debug, --help, correzione Locales e Health Check pulito
+# ==============================================================================
 
 set -e
 
@@ -6,15 +10,13 @@ set -e
 # GESTIONE ARGOMENTI CLI (--debug, --help)
 # ==============================================================================
 DEBUG_MODE=false
-QUIET=">/dev/null 2>&1"
 
 for arg in "$@"; do
     case $arg in
         --debug)
             DEBUG_MODE=true
-            QUIET=""
             set -x
-            echo "🔧 [DEBUG MODE ATTIVO] Verrà mostrato l'output completo di ogni comando."
+            echo "🔧 [DEBUG MODE ATTIVO] Tracciamento dei comandi abilitato."
             shift
             ;;
         --help|-h)
@@ -24,8 +26,7 @@ for arg in "$@"; do
             echo "Uso: sudo ./install_odoo_oca.sh [OPZIONI]"
             echo ""
             echo "Opzioni disponibili:"
-            echo "  --debug    Stampa a video l'output completo e dettagliato di ogni"
-            echo "             operazione (cloni git, pip install, comandi apt, ecc.)."
+            echo "  --debug    Attiva il tracciamento dettagliato dei comandi (set -x)."
             echo "  --help     Mostra questo manuale di aiuto."
             echo "======================================================================"
             exit 0
@@ -57,7 +58,6 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Controllo privilegi di root
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Errore: Questo script deve essere eseguito come root (sudo).${NC}"
     exit 1
@@ -151,7 +151,7 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
                     sudo -u "$OE_USER" git pull origin "$OE_VERSION" >/dev/null 2>&1 || true
                 else
                     echo -e "Nuovo repository rilevato -> Cloned: ${GREEN}$REPO_NAME${NC}"
-                    sudo -u "$OE_USER" git clone -b "$OE_VERSION" --single-branch "$REPO_URL" "$TARGET_DIR" $(eval echo $QUIET) || true
+                    sudo -u "$OE_USER" git clone -b "$OE_VERSION" --single-branch "$REPO_URL" "$TARGET_DIR" >/dev/null 2>&1 || true
                 fi
 
                 if [ -d "$TARGET_DIR" ]; then
@@ -164,7 +164,7 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
                     
                     if [ -f "$TARGET_DIR/requirements.txt" ]; then
                         echo -e "  -> Aggiornamento dipendenze Python per ${GREEN}$REPO_NAME${NC}..."
-                        sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" $(eval echo $QUIET) || true
+                        sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" >/dev/null 2>&1 || true
                     fi
                 fi
             done < "$OCA_LIST_FILE"
@@ -175,44 +175,35 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
         if [ -d "$OE_HOME_EXT/.git" ]; then
             cd "$OE_HOME_EXT"
             sudo -u "$OE_USER" git pull origin "$OE_VERSION" || true
-            sudo -u "$OE_USER" "$PIP_CMD" install -r requirements.txt $(eval echo $QUIET) || true
+            sudo -u "$OE_USER" "$PIP_CMD" install -r requirements.txt >/dev/null 2>&1 || true
         fi
 
-echo -e "\n${BLUE}>>> [5/6] Avvio Odoo in modalità aggiornamento globale (-u all)...${NC}"
+        echo -e "\n${BLUE}>>> [5/6] Avvio Odoo in modalità aggiornamento globale (-u all)...${NC}"
         touch /var/log/odoo/odoo.log
         chown "$OE_USER:$OE_USER" /var/log/odoo/odoo.log
         
-        # Avvia Odoo in background
+        # Disattiva temporaneamente il trace per il loop di attesa pulito
+        [ "$DEBUG_MODE" = true ] && set +x
+
         sudo -u "$OE_USER" "$PYTHON_CMD" "$OE_HOME_EXT/odoo-bin" -c "$OE_CONFIG" -u all &
         ODOO_PID=$!
 
-        echo -e "${YELLOW}Monitoraggio log in corso (gli errori appariranno in rosso a video)...${NC}"
+        echo -e "${YELLOW}Attendibilità avvio Odoo (controllo porta 8069 in corso)...${NC}"
+        ATTEMPT=0
+        MAX_ATTEMPTS=45
+        STARTED=false
 
-        # Avvia un monitor in tempo reale che filtra e colora gli errori
-        tail -n 0 -F /var/log/odoo/odoo.log 2>/dev/null | while read -r line; do
-            if echo "$line" | grep -q -E "ERROR|CRITICAL|Traceback|Exception"; then
-                echo -e "${RED}[ERRORE RILEVATO] $line${NC}"
-            elif echo "$line" | grep -q -E "HTTP service running|Modules loaded"; then
-                echo -e "${GREEN}[COMPLETATO] $line${NC}"
-                break
-            elif echo "$line" | grep -q "loading "; then
-                # Mostra il modulo in fase di caricamento (opzionale, pulito)
-                echo -e "${BLUE}->${NC} $line"
-            fi
-        done &
-        MONITOR_PID=$!
-
-        # Attende che il processo principale di Odoo termini l'aggiornamento o il caricamento
-        while kill -0 $ODOO_PID 2>/dev/null; do
-            if grep -q -E "HTTP service running|Modules loaded" /var/log/odoo/odoo.log 2>/dev/null; then
-                sleep 3
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if curl -s http://127.0.0.1:8069 >/dev/null 2>&1; then
+                STARTED=true
                 break
             fi
-            sleep 2
+            sleep 3
+            ((ATTEMPT++))
         done
 
-        # Pulizia dei processi di monitoraggio e Odoo
-        kill $MONITOR_PID 2>/dev/null || true
+        [ "$DEBUG_MODE" = true ] && set -x
+
         kill $ODOO_PID 2>/dev/null || true
         wait $ODOO_PID 2>/dev/null || true
 
@@ -248,9 +239,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y sudo curl wget locales tzdata keyboard-configuration python3 python3-pip jq
 
-echo -e "\n${YELLOW}>>> Generazione dei Locales di sistema (UTF-8)...${NC}"
+echo -e "\n${YELLOW}>>> Generazione corretta dei Locales di sistema (UTF-8)...${NC}"
 sed -i '/en_US.UTF-8 UTF-8/s/^# //' /etc/locale.gen
-locale-gen en_US.UTF-8 it_IT.UTF-8 $(eval echo $QUIET) || true
+locale-gen en_US.UTF-8 it_IT.UTF-8 >/dev/null 2>&1 || true
 update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 LANGUAGE=en_US.UTF-8
 
 export LANG=en_US.UTF-8
@@ -340,11 +331,11 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" --no-install-recommends "${MISSING_PACKAGES[@]}"
 fi
 
-if ! command -v rtlcss > /dev/null; then npm install -g rtlcss $(eval echo $QUIET) || true; fi
+if ! command -v rtlcss > /dev/null; then npm install -g rtlcss >/dev/null 2>&1 || true; fi
 if ! command -v wkhtmltopdf > /dev/null; then
     wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb || true
     if [ -f wkhtmltox_0.12.6.1-2.jammy_amd64.deb ]; then
-        apt-get install -y ./wkhtmltox_0.12.6.1-2.jammy_amd64.deb $(eval echo $QUIET) || true
+        apt-get install -y ./wkhtmltox_0.12.6.1-2.jammy_amd64.deb >/dev/null || true
         rm -f wkhtmltox_0.12.6.1-2.jammy_amd64.deb
         ln -sf /usr/local/bin/wkhtmltopdf /usr/bin/wkhtmltopdf 2>/dev/null || true
         ln -sf /usr/local/bin/wkhtmltoimage /usr/bin/wkhtmltoimage 2>/dev/null || true
@@ -386,8 +377,8 @@ fi
 if [ ! -d "$VENV_DIR" ]; then 
     sudo -u "$OE_USER" python3 -m venv "$VENV_DIR"
 fi
-sudo -u "$OE_USER" "$PIP_CMD" install --upgrade pip wheel setuptools $(eval echo $QUIET) || true
-sudo -u "$OE_USER" "$PIP_CMD" install -r "$OE_HOME_EXT/requirements.txt" $(eval echo $QUIET) || true
+sudo -u "$OE_USER" "$PIP_CMD" install --upgrade pip wheel setuptools >/dev/null
+sudo -u "$OE_USER" "$PIP_CMD" install -r "$OE_HOME_EXT/requirements.txt" >/dev/null
 
 # ==============================================================================
 # 4. DOWNLOAD E SINCRONIZZAZIONE MODULI OCA DA oca.txt (Con check requirements)
@@ -413,7 +404,7 @@ if [ -f "$OCA_LIST_FILE" ]; then
             sudo -u "$OE_USER" git pull origin "$OE_VERSION" >/dev/null 2>&1 || true
         else
             echo -e "Nuovo repository rilevato -> Cloned: ${GREEN}$REPO_NAME${NC}"
-            sudo -u "$OE_USER" git clone -b "$OE_VERSION" --single-branch "$REPO_URL" "$TARGET_DIR" $(eval echo $QUIET) || true
+            sudo -u "$OE_USER" git clone -b "$OE_VERSION" --single-branch "$REPO_URL" "$TARGET_DIR" >/dev/null 2>&1 || true
         fi
 
         if [ -d "$TARGET_DIR" ]; then
@@ -426,7 +417,7 @@ if [ -f "$OCA_LIST_FILE" ]; then
 
             if [ -f "$TARGET_DIR/requirements.txt" ]; then
                 echo -e "  -> Installazione dipendenze Python da requirements.txt per ${GREEN}$REPO_NAME${NC}..."
-                sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" $(eval echo $QUIET) || true
+                sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" >/dev/null 2>&1 || true
             fi
         fi
     done < "$OCA_LIST_FILE"
