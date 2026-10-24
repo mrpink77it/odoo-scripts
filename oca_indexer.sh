@@ -1,101 +1,146 @@
-# Sostituisci la parte del blocco Python nella funzione select_repos_for_installer con questa:
+#!/bin/bash
+# ==============================================================================
+# OCA REPOSITORIES INDEXER -> oca.txt (Clean & Essential)
+# ==============================================================================
 
-python3 - << 'EOF'
-import csv
-import os
-import sys
+set -e
 
-repos_csv = "./oca_data/oca_repositories_summary.csv"
-output_file = "./oca_data/selected_repos_v18.0.txt" # (o variabile dinamica)
-target_ver = "18.0"
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-repos = []
-with open(repos_csv, 'r', encoding='utf-8') as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        repos.append(row['repo_name'])
+OUTPUT_TXT="oca.txt"
 
-repos = sorted(list(set(repos)))
+# ------------------------------------------------------------------------------
+# GESTIONE ARGOMENTI CLI (--help, --vlog, --log)
+# ------------------------------------------------------------------------------
+DEBUG_VIDEO=false
+LOG_FILE=""
 
-DEPENDENCIES = {
-    "l10n-italy": ["server-tools", "account-financial-reporting", "account-payment", "partner-contact"],
-    "account-financial-reporting": ["server-tools", "account-financial-tools"],
-    "sale-workflow": ["server-tools", "partner-contact"],
-    "purchase-workflow": ["server-tools", "partner-contact"],
-    "stock-logistics-workflow": ["server-tools", "product-attribute"],
-    "account-asset": ["server-tools", "account-financial-tools"]
+for arg in "$@"; do
+    case $arg in
+        --help|-h)
+            echo -e "${BLUE}======================================================================${NC}"
+            echo -e "${GREEN}HELP - OCA INDEXER${NC}"
+            echo -e "${BLUE}======================================================================${NC}"
+            echo "Uso: ./oca_indexer.sh [OPZIONI]"
+            echo ""
+            echo "Opzioni disponibili:"
+            echo "  --help, -h     Mostra questo manuale di aiuto."
+            echo "  --vlog         Abilita il debug verboso a video in tempo reale."
+            echo "  --log          Salva i log dettagliati su file 'oca_indexer.log' nella root."
+            echo -e "${BLUE}======================================================================${NC}"
+            exit 0
+            ;;
+        --vlog)
+            DEBUG_VIDEO=true
+            echo -e "${YELLOW}[DEBUG MODE] Debug verboso a video attivato.${NC}"
+            ;;
+        --log)
+            LOG_FILE="oca_indexer.log"
+            exec > >(tee -a "$LOG_FILE") 2>&1
+            echo -e "${YELLOW}[LOG MODE] Logging su file '$LOG_FILE' attivato.${NC}"
+            ;;
+    esac
+done
+
+# ------------------------------------------------------------------------------
+# VERIFICA E INSTALLAZIONE AUTOMATICA DELLE DIPENDENZE
+# ------------------------------------------------------------------------------
+check_dependencies() {
+    [ "$DEBUG_VIDEO" = true ] && echo "[DEBUG] Verifica dipendenze di sistema..."
+    
+    MISSING_DEPS=()
+    if ! command -v python3 &> /dev/null; then
+        MISSING_DEPS+=("python3")
+    fi
+    if ! command -v curl &> /dev/null; then
+        MISSING_DEPS+=("curl")
+    fi
+    
+    if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+        echo -e "${YELLOW}Rilevate dipendenze mancanti: ${MISSING_DEPS[*]}. Installazione automatica...${NC}"
+        if command -v apt-get &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "${MISSING_DEPS[@]}"
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y -q "${MISSING_DEPS[@]}"
+        else
+            echo -e "${RED}Impossibile installare automaticamente. Installa manualmente: ${MISSING_DEPS[*]}${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}✔ Dipendenze installate con successo.${NC}"
+    else
+        [ "$DEBUG_VIDEO" = true ] && echo "[DEBUG] Dipendenze già soddisfatte."
+    fi
 }
 
-selected_set = {"l10n-italy"}
+check_dependencies
 
-def print_menu():
-    os.system('clear' if os.name == 'posix' else 'cls')
-    print("=" * 75)
-    print(f"       SELEZIONE REPOSITORY PER INSTALLER")
-    print("=" * 75)
-    print(f"📦 Repository attualmente selezionati: {len(selected_set)}")
-    print("-" * 75)
-    print("  ID   [Stato]   Nome Repository")
-    print("-" * 75)
-    
-    for idx, repo in enumerate(repos, 1):
-        status = "[X]" if repo in selected_set else "[ ]"
-        print(f" {idx:3d})  {status}    {repo}")
-        
-    print("-" * 75)
-    print(" COMANDI:")
-    print("   • Inserisci i numeri separati da spazio (es. 1 5 12)")
-    print("   • [A] Seleziona Tutti  |  [R] Reset  |  [O] Conferma (OK)  |  [B] Indietro")
-    print("=" * 75)
+# ------------------------------------------------------------------------------
+# ESECUZIONE PRINCIPALE: Generazione di oca.txt
+# ------------------------------------------------------------------------------
+echo -e "\n${BLUE}>>> Generazione file '$OUTPUT_TXT' dai repository ufficiali OCA...${NC}"
 
-# Apre direttamente il terminale interattivo per l'input
-tty = open('/dev/tty', 'r')
-sys.stdin = tty
+python3 - << EOF
+import urllib.request
+import json
+import os
+
+output_txt = "$OUTPUT_TXT"
+debug_video = True if "$DEBUG_VIDEO" == "true" else False
+
+headers = {'User-Agent': 'Odoo-OCA-Indexer', 'Accept': 'application/vnd.github.v3+json'}
+urls_list = []
+page = 1
+per_page = 100
+
+print("Connessione alle API GitHub (OCA Organization)...")
 
 while True:
-    print_menu()
+    url = f"https://api.github.com/orgs/OCA/repos?per_page={per_page}&page={page}"
+    if debug_video:
+        print(f"[DEBUG] Richiesta API URL: {url}")
     try:
-        choice = input("\nInserisci scelta o comando: ").strip()
-    except EOFError:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if not data:
+                break
+            
+            for r in data:
+                repo_name = r.get("name", "").lower()
+                html_url = r.get("html_url", "")
+                
+                # Esclusione unit test e openupgrade
+                if "test" in repo_name or "openupgrade" in repo_name:
+                    if debug_video:
+                        print(f"[DEBUG] Escluso repository: {repo_name}")
+                    continue
+                
+                if html_url and html_url not in urls_list:
+                    urls_list.append(html_url)
+            
+            print(f"Pagina GitHub {page} elaborata ({len(data)} repository analizzati)...")
+            if len(data) < per_page:
+                break
+            page += 1
+    except Exception as e:
+        print(f"⚠️ Errore o limite API raggiunto alla pagina {page}: {e}")
         break
+
+if urls_list:
+    # Ordinamento alfabetico pulito
+    urls_list = sorted(list(set(urls_list)))
     
-    if choice.upper() == 'O':
-        selected_set.add("l10n-italy")
-        with open(output_file, 'w', encoding='utf-8') as f:
-            for repo in sorted(list(selected_set)):
-                f.write(f"{repo}\n")
-        print(f"\n✅ Configurazione salvata in '{output_file}' con {len(selected_set)} repository.")
-        input("\nPremi INVIO per tornare al menu principale...")
-        break
-    elif choice.upper() == 'B':
-        print("\n↩️ Annullato. Ritorno al menu principale.")
-        break
-    elif choice.upper() == 'R':
-        selected_set = {"l10n-italy"}
-        print("\n🔄 Selezione resettata (mantenuto l10n-italy di default).")
-        input("Premi INVIO per continuare...")
-    elif choice.upper() == 'A':
-        selected_set = set(repos)
-        print("\n✅ Selezionati tutti i repository.")
-        input("Premi INVIO per continuare...")
-    else:
-        parts = choice.split()
-        added_deps = set()
-        for p in parts:
-            if p.isdigit():
-                idx = int(p) - 1
-                if 0 <= idx < len(repos):
-                    repo = repos[idx]
-                    if repo in selected_set:
-                        selected_set.remove(repo)
-                    else:
-                        selected_set.add(repo)
-                        if repo in DEPENDENCIES:
-                            for dep in DEPENDENCIES[repo]:
-                                if dep in repos and dep not in selected_set:
-                                    selected_set.add(dep)
-                                    added_deps.add(dep)
-        if added_deps:
-            print(f"\n🔗 Dipendenze aggiunte automaticamente: {', '.join(added_deps)}")
-            input("Premi INVIO per continuare...")
+    with open(output_txt, 'w', encoding='utf-8') as f:
+        for url in urls_list:
+            f.write(f"{url}\n")
+            
+    print(f"\n✅ Operazione completata: '{output_txt}' generato con successo.")
+    print(f"📦 Totale repository inclusi: {len(urls_list)}")
+else:
+    print("\n❌ Nessun repository recuperato.")
 EOF
