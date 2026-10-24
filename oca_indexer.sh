@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# OCA REPOSITORIES & MODULES INDEXER FOR ODOO INSTALLER (GitHub API Mode)
+# OCA REPOSITORIES & MODULES INDEXER FOR ODOO INSTALLER (Interactive UI)
 # ==============================================================================
 
 set -e
@@ -24,7 +24,7 @@ for arg in "$@"; do
     case $arg in
         --help|-h)
             echo -e "${BLUE}======================================================================${NC}"
-            echo -e "${GREEN}HELP - OCA INDEXER COMMANDS (GitHub API Mode)${NC}"
+            echo -e "${GREEN}HELP - OCA INDEXER COMMANDS${NC}"
             echo -e "${BLUE}======================================================================${NC}"
             echo "Uso: ./oca_indexer.sh [OPZIONI]"
             echo ""
@@ -126,7 +126,7 @@ while True:
                     "github_url": html_url,
                     "module_count": 1,
                     "categories": "General",
-                    "supported_versions": "14.0, 15.0, 16.0, 17.0, 18.0",
+                    "supported_versions": "14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0",
                     "description": description,
                     "size_kb": size
                 })
@@ -150,7 +150,7 @@ if repos_list:
         writer = csv.writer(f)
         writer.writerow(["technical_name", "title", "repo", "author", "category", "versions", "github_url"])
         for r in repos_list:
-            writer.writerow([r["repo_name"], r["description"], r["repo_name"], "OCA", "General", "14.0,15.0,16.0,17.0,18.0", r["github_url"]])
+            writer.writerow([r["repo_name"], r["description"], r["repo_name"], "OCA", "General", "14.0,15.0,16.0,17.0,18.0,19.0,20.0", r["github_url"]])
 
     print(f"\n✅ Sincronizzazione completata: {len(repos_list)} repository ufficiali OCA indicizzati in '{output_csv}'.")
 else:
@@ -191,7 +191,7 @@ rebuild_github_repos() {
 }
 
 # ------------------------------------------------------------------------------
-# 4. FUNZIONE: Selezione Repo per Installer e versione Odoo
+# 4. FUNZIONE: Selezione Interattiva Avanzata con Dipendenze e Contatore
 # ------------------------------------------------------------------------------
 select_repos_for_installer() {
     REPOS_CSV="$DATA_DIR/oca_repositories_summary.csv"
@@ -209,37 +209,102 @@ select_repos_for_installer() {
     done
 
     OUTPUT_SELECTION="$DATA_DIR/selected_repos_v${TARGET_VER}.txt"
-    echo -e "\n${BLUE}=== SELEZIONE REPOSITORY PER INSTALLER (Odoo $TARGET_VER) ===${NC}"
-    echo -e "Digita i nomi dei repository separati da spazio, oppure digita '${YELLOW}ALL${NC}' per tutti:\n"
-
-    read -p "Repository scelti: " USER_INPUT
 
     python3 - << EOF
 import csv
+import os
 
 repos_csv = "$REPOS_CSV"
 output_file = "$OUTPUT_SELECTION"
 target_ver = "$TARGET_VER"
-user_input = "$USER_INPUT".strip().split()
 
-selected = []
-
+# Caricamento repository dal CSV
+repos = []
 with open(repos_csv, 'r', encoding='utf-8') as f:
     reader = csv.DictReader(f)
     for row in reader:
-        repo = row['repo_name']
-        if "ALL" in user_input or repo in user_input:
-            selected.append(repo)
+        repos.append(row['repo_name'])
 
-if "l10n-italy" not in selected:
-    selected.append("l10n-italy")
+repos = sorted(list(set(repos)))
 
-with open(output_file, 'w', encoding='utf-8') as f:
-    for repo in selected:
-        f.write(f"{repo}\n")
+# Mappa delle dipendenze note OCA (es. l10n-italy richiede strumenti contabili e base)
+DEPENDENCIES = {
+    "l10n-italy": ["server-tools", "account-financial-reporting", "account-payment", "partner-contact"],
+    "account-financial-reporting": ["server-tools", "account-financial-tools"],
+    "sale-workflow": ["server-tools", "partner-contact"],
+    "purchase-workflow": ["server-tools", "partner-contact"],
+    "stock-logistics-workflow": ["server-tools", "product-attribute"],
+    "account-asset": ["server-tools", "account-financial-tools"]
+}
 
-print(f"\n✅ File configurazione generato: '{output_file}'")
-print(f"📦 Repository inclusi ({len(selected)}): {', '.join(selected)}")
+selected_set = {"l10n-italy"} # Default di sicurezza
+
+def print_menu():
+    os.system('clear' if os.name == 'posix' else 'cls')
+    print("=" * 75)
+    print(f"       SELEZIONE REPOSITORY PER INSTALLER (Odoo {target_ver})")
+    print("=" * 75)
+    print(f"📦 Repository attualmente selezionati: {len(selected_set)}")
+    print("-" * 75)
+    print("  ID   [Stato]   Nome Repository")
+    print("-" * 75)
+    
+    for idx, repo in enumerate(repos, 1):
+        status = "[X]" if repo in selected_set else "[ ]"
+        print(f" {idx:3d})  {status}    {repo}")
+        
+    print("-" * 75)
+    print(" COMANDI:")
+    print("   • Inserisci i numeri separati da spazio (es. 1 5 12) per attivarli/disattivarli.")
+    print("   • [A] Seleziona Tutti  |  [R] Reset  |  [O] Conferma (OK)  |  [B] Indietro")
+    print("=" * 75)
+
+while True:
+    print_menu()
+    choice = input("\nInserisci scelta o comando: ").strip()
+    
+    if choice.upper() == 'O':
+        # Assicura l10n-italy
+        selected_set.add("l10n-italy")
+        with open(output_file, 'w', encoding='utf-8') as f:
+            for repo in sorted(list(selected_set)):
+                f.write(f"{repo}\n")
+        print(f"\n✅ Configurazione salvata in '{output_file}' con {len(selected_set)} repository.")
+        input("\nPremi INVIO per tornare al menu principale...")
+        break
+    elif choice.upper() == 'B':
+        print("\n↩️ Annullato. Ritorno al menu principale.")
+        break
+    elif choice.upper() == 'R':
+        selected_set = {"l10n-italy"}
+        print("\n🔄 Selezione resettata (mantenuto l10n-italy di default).")
+        input("Premi INVIO per continuare...")
+    elif choice.upper() == 'A':
+        selected_set = set(repos)
+        print("\n✅ Selezionati tutti i repository.")
+        input("Premi INVIO per continuare...")
+    else:
+        # Parsing dei numeri inseriti dall'utente
+        parts = choice.split()
+        added_deps = set()
+        for p in parts:
+            if p.isdigit():
+                idx = int(p) - 1
+                if 0 <= idx < len(repos):
+                    repo = repos[idx]
+                    if repo in selected_set:
+                        selected_set.remove(repo)
+                    else:
+                        selected_set.add(repo)
+                        # Controllo e aggiunta automatica dipendenze
+                        if repo in DEPENDENCIES:
+                            for dep in DEPENDENCIES[repo]:
+                                if dep in repos and dep not in selected_set:
+                                    selected_set.add(dep)
+                                    added_deps.add(dep)
+        if added_deps:
+            print(f"\n🔗 Dipendenze aggiunte automaticamente: {', '.join(added_deps)}")
+            input("Premi INVIO per continuare...")
 EOF
 }
 
@@ -253,7 +318,7 @@ while true; do
     echo "1. Scarica / Aggiorna indice di TUTTI i repository OCA via GitHub API"
     echo "2. Filtra ed estrai repository per specifica versione Odoo (14.0 - 20.0)"
     echo "3. Ricostruisci mappa completa dei Repository GitHub OCA"
-    echo "4. Seleziona Repo per l'installer automatico e versione Odoo"
+    echo "4. Seleziona Repo per l'installer automatico e versione Odoo (Menu Interattivo)"
     echo "5. Esci"
     echo -e "${BLUE}======================================================================${NC}"
     
