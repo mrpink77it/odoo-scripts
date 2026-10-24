@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER (Robust Parser)
+# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER
 # ==============================================================================
 
 set -e
@@ -15,10 +15,43 @@ DATA_DIR="./oca_data"
 mkdir -p "$DATA_DIR"
 
 # ------------------------------------------------------------------------------
+# GESTIONE ARGOMENTI CLI (--help, --vlog, --log)
+# ------------------------------------------------------------------------------
+DEBUG_VIDEO=false
+LOG_FILE=""
+
+for arg in "$@"; do
+    case $arg in
+        --help|-h)
+            echo -e "${BLUE}======================================================================${NC}"
+            echo -e "${GREEN}HELP - OCA INDEXER COMMANDS${NC}"
+            echo -e "${BLUE}======================================================================${NC}"
+            echo "Uso: ./oca_indexer.sh [OPZIONI]"
+            echo ""
+            echo "Opzioni disponibili:"
+            echo "  --help, -h     Mostra questo manuale di aiuto."
+            echo "  --vlog         Abilita il debug verboso a video in tempo reale."
+            echo "  --log          Salva i log dettagliati su file 'oca_indexer.log' nella root."
+            echo -e "${BLUE}======================================================================${NC}"
+            exit 0
+            ;;
+        --vlog)
+            DEBUG_VIDEO=true
+            echo -e "${YELLOW}[DEBUG MODE] Debug verboso a video attivato.${NC}"
+            ;;
+        --log)
+            LOG_FILE="oca_indexer.log"
+            exec > >(tee -a "$LOG_FILE") 2>&1
+            echo -e "${YELLOW}[LOG MODE] Logging su file '$LOG_FILE' attivato.${NC}"
+            ;;
+    esac
+done
+
+# ------------------------------------------------------------------------------
 # VERIFICA E INSTALLAZIONE AUTOMATICA DELLE DIPENDENZE
 # ------------------------------------------------------------------------------
 check_dependencies() {
-    echo -e "${BLUE}>>> Verifica dipendenze di sistema in corso...${NC}"
+    [ "$DEBUG_VIDEO" = true ] && echo "[DEBUG] Verifica dipendenze di sistema..."
     
     MISSING_DEPS=()
     if ! command -v python3 &> /dev/null; then
@@ -41,77 +74,88 @@ check_dependencies() {
         fi
         echo -e "${GREEN}✔ Dipendenze installate con successo.${NC}"
     else
-        echo -e "${GREEN}✔ Tutte le dipendenze sono soddisfatte.${NC}"
+        [ "$DEBUG_VIDEO" = true ] && echo "[DEBUG] Dipendenze già soddisfatte."
     fi
 }
 
 check_dependencies
 
 # ------------------------------------------------------------------------------
-# 1. FUNZIONE: Scansione dinamica dell'App Store OCA (Pagine 1-30+)
+# 1. FUNZIONE: Scansione dinamica dell'App Store OCA con conteggio pagine
 # ------------------------------------------------------------------------------
 fetch_all_modules() {
     echo -e "\n${BLUE}>>> Avvio scansione dinamica dell'App Store OCA...${NC}"
-    echo -e "${YELLOW}Il sistema interroga le pagine dell'App Store rilevando automaticamente i moduli.${NC}"
     
-    python3 - << 'EOF'
+    python3 - << EOF
 import urllib.request
 import re
 import csv
 import os
+import math
 
 data_dir = "./oca_data"
 output_csv = os.path.join(data_dir, "all_oca_modules.csv")
+debug_video = True if "$DEBUG_VIDEO" == "true" else False
 
-headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'}
 modules_list = []
 
-page = 1
 per_page = 250
+first_url = f"https://apps.odoo-community.org/modules?per_page={per_page}&page=1"
 
-print("Connessione all'App Store OCA in corso...")
+print(f"Connessione a {first_url} per il rilevamento totale moduli...")
 
-while page <= 40:
+try:
+    req = urllib.request.Request(first_url, headers=headers)
+    with urllib.request.urlopen(req) as response:
+        html = response.read().decode('utf-8')
+        
+        # Estrae il conteggio totale dei moduli dalla pagina (es. "7282 items found")
+        total_items_match = re.search(r'(\d+)\s+items found', html, re.IGNORECASE)
+        if total_items_match:
+            total_items = int(total_items_match.group(1))
+            total_pages = math.ceil(total_items / per_page)
+            print(f"📊 Rilevati {total_items} moduli totali distribuiti su {total_pages} pagine.")
+        else:
+            total_pages = 35 # Fallback di sicurezza
+            print(f"⚠️ Conteggio totale non trovato nel testo, imposto limite dinamico a {total_pages} pagine.")
+except Exception as e:
+    print(f"❌ Errore di connessione iniziale: {e}")
+    total_pages = 35
+
+for page in range(1, total_pages + 1):
     url = f"https://apps.odoo-community.org/modules?per_page={per_page}&page={page}"
+    if debug_video:
+        print(f"[DEBUG] Richiesta URL: {url}")
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req) as response:
             html = response.read().decode('utf-8')
             
-            # Pattern di ricerca per i moduli nell'HTML dell'App Store OCA
-            # Ogni modulo ha un blocco con href="/modules/NOME_TECNICO"
             matches = re.findall(r'href="/modules/([^"]+)"([^>]*>.*?)(?=href="/modules/|$)', html, re.DOTALL)
             
-            if not matches and 'items found' not in html:
-                break
-                
             page_modules_count = 0
             for tech_name, block in matches:
                 if not tech_name or '/' in tech_name or '?' in tech_name or '#' in tech_name or 'categories' in tech_name:
                     continue
                 
-                # Titolo
                 title_match = re.search(r'<h3>.*?>(.*?)</a></h3>', block, re.DOTALL)
                 if not title_match:
                     title_match = re.search(r'>(.*?)</a></h3>', block, re.DOTALL)
                 title = title_match.group(1) if title_match else tech_name
                 title = re.sub(r'<[^>]+>', '', title).strip()
                 
-                # Repository GitHub
                 repo_match = re.search(r'github\.com/OCA/([^/"]+)', block)
                 repo = repo_match.group(1) if repo_match else ""
                 
-                # Versioni Odoo supportate
                 versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', block)
                 if not versions_found:
                     versions_found = re.findall(r'>(1[0-9]\.0|\d{2}\.0)<', block)
                 versions = ",".join(sorted(list(set(versions_found)), reverse=True))
                 
-                # URL GitHub completo
                 gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', block)
                 github_url = gh_match.group(1) if gh_match else (f"https://github.com/OCA/{repo}/tree/master/{tech_name}" if repo else "")
                 
-                # Categoria
                 cat_match = re.search(r'/categories/([^"]+)"', block)
                 category = cat_match.group(1) if cat_match else ""
                 
@@ -127,14 +171,13 @@ while page <= 40:
                     })
                     page_modules_count += 1
 
-            print(f"Pagina {page} elaborata ({page_modules_count} moduli trovati - Totale accumulato: {len(modules_list)})...")
+            print(f"Pagina {page}/{total_pages} elaborata ({page_modules_count} moduli - Totale accumulato: {len(modules_list)})...")
             
-            if page_modules_count == 0:
+            if page_modules_count == 0 and page > 3:
                 break
-            page += 1
     except Exception as e:
-        print(f"Interrotto alla pagina {page}: {e}")
-        break
+        print(f"⚠️ Errore alla pagina {page}: {e}")
+        continue
 
 if modules_list:
     fieldnames = ["technical_name", "title", "repo", "author", "category", "versions", "github_url"]
@@ -142,9 +185,9 @@ if modules_list:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(modules_list)
-    print(f"\n✅ Scansione completata con successo: {len(modules_list)} moduli totali salvati in '{output_csv}'.")
+    print(f"\n✅ Salvataggio completato: {len(modules_list)} moduli salvati in '{output_csv}'.")
 else:
-    print("\n⚠️ Nessun modulo estratto. Controlla la connessione o la struttura HTML.")
+    print("\n❌ Nessun modulo estratto. Controlla la connessione di rete.")
 EOF
 }
 
