@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # INSTALLER ODOO + ALL-IN-ONE OCA INDEXER & SYNC (Bare-Metal Ubuntu/Debian)
-# Integrato con: Auto-Indexer, Timezone, Tastiera, UTF-8, Logrotate e Health Check
+# Con Controllo Rigoroso requirements.txt Post-Clone/Pull, Update & Health Check
 # ==============================================================================
 
 set -e
@@ -37,13 +37,168 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # ==============================================================================
-# 0. CONFIGURAZIONE INIZIALE: ENCODING UTF-8, TIMEZONE, TASTIERA E LINGUA
+# FUNZIONE CONDIVISA: GENERAZIONE AUTOMATICA DI oca.txt VIA GITHUB API
+# ==============================================================================
+generate_oca_txt() {
+    echo -e "\n${BLUE}>>> Generazione automatica del file 'oca.txt' (GitHub API)...${NC}"
+    python3 - << EOF
+import urllib.request
+import json
+output_txt = "$OCA_LIST_FILE"
+headers = {'User-Agent': 'Odoo-OCA-Indexer', 'Accept': 'application/vnd.github.v3+json'}
+urls_list = []
+page = 1
+per_page = 100
+while True:
+    url = f"https://api.github.com/orgs/OCA/repos?per_page={per_page}&page={page}"
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if not data: break
+            for r in data:
+                repo_name = r.get("name", "").lower()
+                html_url = r.get("html_url", "")
+                if "test" in repo_name or "openupgrade" in repo_name or repo_name == ".github" or repo_name == "ocb":
+                    continue
+                if html_url and html_url not in urls_list:
+                    urls_list.append(html_url)
+            if len(data) < per_page: break
+            page += 1
+    except Exception as e:
+        print(f"⚠️ Errore API GitHub: {e}")
+        break
+if urls_list:
+    with open(output_txt, 'w', encoding='utf-8') as f:
+        for url in sorted(list(set(urls_list))):
+            f.write(f"{url}\n")
+    print(f"✅ File '{output_txt}' generato con successo ({len(urls_list)} repository inclusi).")
+else:
+    print("❌ Impossibile recuperare i repository.")
+EOF
+}
+
+# ==============================================================================
+# 0. CHECK INSTALLAZIONE ESISTENTE & UPDATE AUTOMATICO (Porta 8069)
+# ==============================================================================
+if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q ":8069" || curl -s http://127.0.0.1:8069 >/dev/null 2>&1; then
+    echo -e "${YELLOW}======================================================================${NC}"
+    echo -e "${YELLOW}⚠️  Rilevata un'installazione di Odoo attiva sulla porta 8069!${NC}"
+    echo -e "${YELLOW}======================================================================${NC}"
+    read -p "Vuoi aggiornare la tua installazione odoo? (si/no): " UPDATE_CHOICE
+    
+    if [[ "$UPDATE_CHOICE" =~ ^([sS][iI]|[sS])$ ]]; then
+        echo -e "\n${BLUE}>>> [1/6] Aggiornamento pacchetti di sistema (apt update & dist-upgrade)...${NC}"
+        apt update && apt dist-upgrade -y
+
+        echo -e "\n${BLUE}>>> [2/6] Arresto del servizio Odoo esistente...${NC}"
+        systemctl stop odoo || true
+
+        if [ -d "$OE_HOME_EXT/.git" ]; then
+            OE_VERSION=$(git -C "$OE_HOME_EXT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "18.0")
+        else
+            OE_VERSION="18.0"
+        fi
+        echo -e "${GREEN}Versione Odoo rilevata per l'aggiornamento: $OE_VERSION${NC}"
+
+        if [ ! -f "$OCA_LIST_FILE" ]; then
+            generate_oca_txt
+        fi
+
+        echo -e "\n${BLUE}>>> [3/6] Sincronizzazione repository OCA, Symlink e allineamento requirements.txt...${NC}"
+        if [ -f "$OCA_LIST_FILE" ]; then
+            while IFS= read -r REPO_URL || [ -n "$REPO_URL" ]; do
+                REPO_URL=$(echo "$REPO_URL" | tr -d '\r' | xargs)
+                [[ -z "$REPO_URL" || "$REPO_URL" =~ ^# ]] && continue
+
+                REPO_NAME=$(basename "$REPO_URL" .git)
+                TARGET_DIR="$OCA_REPOS_DIR/$REPO_NAME"
+
+                BRANCH_EXISTS=$(git ls-remote --heads "$REPO_URL" "$OE_VERSION" 2>/dev/null | wc -l)
+                if [ "$BRANCH_EXISTS" -eq 0 ]; then continue; fi
+
+                if [ -d "$TARGET_DIR" ]; then
+                    cd "$TARGET_DIR" || continue
+                    sudo -u "$OE_USER" git checkout "$OE_VERSION" >/dev/null 2>&1 || true
+                    sudo -u "$OE_USER" git pull origin "$OE_VERSION" >/dev/null 2>&1 || true
+                else
+                    echo -e "Nuovo repository rilevato -> Cloned: ${GREEN}$REPO_NAME${NC}"
+                    sudo -u "$OE_USER" git clone -b "$OE_VERSION" --single-branch "$REPO_URL" "$TARGET_DIR" >/dev/null 2>&1 || true
+                fi
+
+                if [ -d "$TARGET_DIR" ]; then
+                    for manifest in "$TARGET_DIR"/*/__manifest__.py "$TARGET_DIR"/*/__openerp__.py; do
+                        if [ -f "$manifest" ]; then
+                            MODULE_DIR=$(dirname "$manifest")
+                            sudo -u "$OE_USER" ln -sfn "$MODULE_DIR" "$CUSTOM_ADDONS_DIR/$(basename "$MODULE_DIR")"
+                        fi
+                    done
+                    
+                    # Verifica e installazione requirements.txt aggiornato
+                    if [ -f "$TARGET_DIR/requirements.txt" ]; then
+                        echo -e "  -> Aggiornamento dipendenze Python per ${GREEN}$REPO_NAME${NC}..."
+                        sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" >/dev/null 2>&1 || true
+                    fi
+                fi
+            done < "$OCA_LIST_FILE"
+        fi
+
+        echo -e "\n${BLUE}>>> [4/6] Esecuzione Git Pull del Core Odoo ($OE_VERSION) e requirements...${NC}"
+        if [ -d "$OE_HOME_EXT/.git" ]; then
+            cd "$OE_HOME_EXT"
+            sudo -u "$OE_USER" git pull origin "$OE_VERSION" || true
+            sudo -u "$OE_USER" "$PIP_CMD" install -r requirements.txt >/dev/null 2>&1 || true
+        fi
+
+        echo -e "\n${BLUE}>>> [5/6] Avvio Odoo in modalità aggiornamento globale (-u all) con tail del log...${NC}"
+        touch /var/log/odoo/odoo.log
+        chown "$OE_USER:$OE_USER" /var/log/odoo/odoo.log
+        
+        sudo -u "$OE_USER" "$PYTHON_CMD" "$OE_HOME_EXT/odoo-bin" -c "$OE_CONFIG" -u all &
+        ODOO_PID=$!
+
+        tail -f /var/log/odoo/odoo.log &
+        TAIL_PID=$!
+
+        while kill -0 $ODOO_PID 2>/dev/null; do
+            if grep -q "HTTP service running" /var/log/odoo/odoo.log 2>/dev/null || grep -q "Modules loaded" /var/log/odoo/odoo.log 2>/dev/null; then
+                sleep 5
+                break
+            fi
+            sleep 2
+        done
+
+        kill $TAIL_PID 2>/dev/null || true
+        kill $ODOO_PID 2>/dev/null || true
+        wait $ODOO_PID 2>/dev/null || true
+
+        echo -e "\n${GREEN}✔ Aggiornamento Odoo completato con successo.${NC}"
+
+        echo -e "\n${YELLOW}>>> [6/6] Operazione completata.${NC}"
+        echo "Cosa desideri fare adesso?"
+        echo "1) Riavviare il server (Reboot)"
+        echo "2) Riavviare solo il servizio Odoo"
+        read -p "Inserisci la tua scelta (1 o 2): " FINAL_CHOICE
+
+        if [ "$FINAL_CHOICE" = "1" ]; then
+            echo -e "${BLUE}Riavvio del server in corso...${NC}"
+            reboot
+        else
+            echo -e "${BLUE}Riavvio del servizio Odoo...${NC}"
+            systemctl restart odoo
+            echo -e "${GREEN}Servizio Odoo riavviato e operativo!${NC}"
+        fi
+        exit 0
+    fi
+fi
+
+# ==============================================================================
+# 0. CONFIGURAZIONE INIZIALE (Nuova Installazione)
 # ==============================================================================
 echo -e "${BLUE}======================================================================${NC}"
 echo -e "${GREEN}    Configurazione Iniziale di Sistema (Encoding, Timezone, Tastiera)${NC}"
 echo -e "${BLUE}======================================================================${NC}"
 
-# Imposizione forzata UTF-8 nelle variabili di shell e ambiente
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
@@ -52,21 +207,17 @@ echo "LANG=en_US.UTF-8" > /etc/default/locale
 echo "LC_ALL=en_US.UTF-8" >> /etc/default/locale
 echo "LANGUAGE=en_US.UTF-8" >> /etc/default/locale
 
-# Assicura pacchetti essenziali per configurazione
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y sudo curl wget locales tzdata keyboard-configuration python3 python3-pip jq
 
-# 1. Selezione interattiva del Fuso Orario (tzdata)
 echo -e "\n${YELLOW}>>> Configurazione del fuso orario (Timezone)...${NC}"
 export DEBIAN_FRONTEND=dialog
 dpkg-reconfigure tzdata
 
-# 2. Selezione interattiva della Tastiera (keyboard-configuration)
 echo -e "\n${YELLOW}>>> Configurazione della disposizione della tastiera...${NC}"
 dpkg-reconfigure keyboard-configuration
 
-# 3. Generazione e impostazione dei Locales UTF-8
 echo -e "\n${YELLOW}>>> Configurazione dei Locales di sistema (UTF-8)...${NC}"
 locale-gen en_US.UTF-8 it_IT.UTF-8 >/dev/null 2>&1 || true
 update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
@@ -75,64 +226,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get upgrade -y
 
-# ==============================================================================
-# 0.1 INTEGRATED OCA INDEXER (Generazione Automatica di oca.txt)
-# ==============================================================================
-echo -e "\n${BLUE}======================================================================${NC}"
-echo -e "${GREEN}    Scansione Automatica Repository Ufficiali OCA (via GitHub API)${NC}"
-echo -e "${BLUE}======================================================================${NC}"
-
-python3 - << EOF
-import urllib.request
-import json
-import os
-
-output_txt = "$OCA_LIST_FILE"
-headers = {'User-Agent': 'Odoo-OCA-Indexer', 'Accept': 'application/vnd.github.v3+json'}
-urls_list = []
-page = 1
-per_page = 100
-
-print("Connessione alle API GitHub (OCA Organization)...")
-
-while True:
-    url = f"https://api.github.com/orgs/OCA/repos?per_page={per_page}&page={page}"
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            if not data:
-                break
-            
-            for r in data:
-                repo_name = r.get("name", "").lower()
-                html_url = r.get("html_url", "")
-                
-                # Esclusione unit test, openupgrade, .github e OCB
-                if "test" in repo_name or "openupgrade" in repo_name or repo_name == ".github" or repo_name == "ocb":
-                    continue
-                
-                if html_url and html_url not in urls_list:
-                    urls_list.append(html_url)
-            
-            print(f"Pagina GitHub {page} elaborata ({len(data)} repository analizzati)...")
-            if len(data) < per_page:
-                break
-            page += 1
-    except Exception as e:
-        print(f"⚠️ Errore durante l'interrogazione delle API GitHub: {e}")
-        break
-
-if urls_list:
-    urls_list = sorted(list(set(urls_list)))
-    with open(output_txt, 'w', encoding='utf-8') as f:
-        for url in urls_list:
-            f.write(f"{url}\n")
-    print(f"✅ Indice generato con successo in '{output_txt}'.")
-    print(f"📦 Totale repository OCA pronti per la sincronizzazione: {len(urls_list)}")
-else:
-    print("❌ Attenzione: Nessun repository recuperato. Si proseguirà con l'installazione base.")
-EOF
+if [ ! -f "$OCA_LIST_FILE" ]; then
+    generate_oca_txt
+fi
 
 echo -e "${BLUE}======================================================================${NC}"
 echo -e "${GREEN}    Installer Odoo + OCA Repos (Ubuntu/Debian Bare-Metal)${NC}"
@@ -248,7 +344,7 @@ sudo -u "$OE_USER" "$PIP_CMD" install --upgrade pip wheel setuptools >/dev/null
 sudo -u "$OE_USER" "$PIP_CMD" install -r "$OE_HOME_EXT/requirements.txt" >/dev/null
 
 # ==============================================================================
-# 4. DOWNLOAD E SINCRONIZZAZIONE MODULI OCA DA oca.txt
+# 4. DOWNLOAD E SINCRONIZZAZIONE MODULI OCA DA oca.txt (Con check requirements)
 # ==============================================================================
 echo -e "\n${BLUE}>>> Sincronizzazione repository OCA da '$OCA_LIST_FILE'...${NC}"
 
@@ -262,17 +358,15 @@ if [ -f "$OCA_LIST_FILE" ]; then
 
         BRANCH_EXISTS=$(git ls-remote --heads "$REPO_URL" "$OE_VERSION" 2>/dev/null | wc -l)
         if [ "$BRANCH_EXISTS" -eq 0 ]; then
-            echo -e "${YELLOW}-> Repository $REPO_NAME: branch '$OE_VERSION' non presente. Ignorato.${NC}"
             continue
         fi
-
-        echo -e "Elaborazione OCA [${GREEN}$REPO_NAME${NC}] per Odoo ${GREEN}$OE_VERSION${NC}..."
 
         if [ -d "$TARGET_DIR" ]; then
             cd "$TARGET_DIR" || continue
             sudo -u "$OE_USER" git checkout "$OE_VERSION" >/dev/null 2>&1 || true
             sudo -u "$OE_USER" git pull origin "$OE_VERSION" >/dev/null 2>&1 || true
         else
+            echo -e "Nuovo repository rilevato -> Cloned: ${GREEN}$REPO_NAME${NC}"
             sudo -u "$OE_USER" git clone -b "$OE_VERSION" --single-branch "$REPO_URL" "$TARGET_DIR" >/dev/null 2>&1 || true
         fi
 
@@ -284,13 +378,13 @@ if [ -f "$OCA_LIST_FILE" ]; then
                 fi
             done
 
+            # Verifica e installazione requirements.txt per ciascun repo OCA
             if [ -f "$TARGET_DIR/requirements.txt" ]; then
+                echo -e "  -> Installazione dipendenze Python da requirements.txt per ${GREEN}$REPO_NAME${NC}..."
                 sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" >/dev/null 2>&1 || true
             fi
         fi
     done < "$OCA_LIST_FILE"
-else
-    echo -e "${YELLOW}File '$OCA_LIST_FILE' vuoto o non trovato. Saltata sincronizzazione OCA.${NC}"
 fi
 
 # ==============================================================================
@@ -385,7 +479,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable odoo
-systemctl restart odoo
+systemctl start odoo
 
 # ==============================================================================
 # 6. GUIDA NGINX PROXY MANAGER (NPM)
