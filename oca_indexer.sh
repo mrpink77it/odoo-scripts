@@ -114,8 +114,8 @@ while True:
                 repo_name = r.get("name", "").lower()
                 html_url = r.get("html_url", "")
                 
-                # Esclusione unit test e openupgrade
-                if "test" in repo_name or "openupgrade" in repo_name:
+                # Esclusione unit test, openupgrade, .github e OCB
+                if "test" in repo_name or "openupgrade" in repo_name or repo_name == ".github" or repo_name == "ocb":
                     if debug_video:
                         print(f"[DEBUG] Escluso repository: {repo_name}")
                     continue
@@ -132,7 +132,6 @@ while True:
         break
 
 if urls_list:
-    # Ordinamento alfabetico pulito
     urls_list = sorted(list(set(urls_list)))
     
     with open(output_txt, 'w', encoding='utf-8') as f:
