@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# OCA REPOSITORIES & MODULES INDEXER FOR ODOO INSTALLER (GitHub API Powered)
+# OCA REPOSITORIES & MODULES INDEXER FOR ODOO INSTALLER (GitHub API Mode)
 # ==============================================================================
 
 set -e
@@ -124,7 +124,7 @@ while True:
                 repos_list.append({
                     "repo_name": repo_name,
                     "github_url": html_url,
-                    "module_count": 1, # Stima base per repo
+                    "module_count": 1,
                     "categories": "General",
                     "supported_versions": "14.0, 15.0, 16.0, 17.0, 18.0",
                     "description": description,
@@ -140,14 +140,12 @@ while True:
         break
 
 if repos_list:
-    # Salvataggio summary repository
     fieldnames = ["repo_name", "github_url", "module_count", "categories", "supported_versions", "description"]
     with open(output_csv, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(repos_list)
     
-    # Salvataggio compatibile con il vecchio tracciato moduli per non rompere le altre opzioni
     with open(all_modules_csv, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(["technical_name", "title", "repo", "author", "category", "versions", "github_url"])
@@ -181,7 +179,7 @@ filter_by_version() {
     OUTPUT_CSV="$DATA_DIR/oca_repos_v${TARGET_VER}.csv"
     echo -e "${BLUE}>>> Filtro repository per Odoo $TARGET_VER in corso...${NC}"
     cp "$INPUT_CSV" "$OUTPUT_CSV"
-    echo -e "${✅ File generato: '$OUTPUT_CSV'}"
+    echo -e "✅ File generato: '$OUTPUT_CSV'"
 }
 
 # ------------------------------------------------------------------------------
