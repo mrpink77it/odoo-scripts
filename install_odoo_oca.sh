@@ -1,11 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # INSTALLER ODOO + OCA SYNC (Bare-Metal Ubuntu/Debian)
-# Ottimizzato con Auto-Tuning, Backup, Logrotate, Lettura oca.txt e Health Check
+# Con configurazione iniziale: Timezone, Tastiera, Locali e UTF-8 Forzato
 # ==============================================================================
 
 set -e
-export DEBIAN_FRONTEND=noninteractive
 
 # ==============================================================================
 # VARIABILI DI CONFIGURAZIONE GLOBALE
@@ -31,15 +30,50 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Assicura la presenza di sudo e aggiorna il sistema
-apt-get update -qq
-apt-get install -y sudo curl wget
-sudo apt update && sudo apt upgrade -y
-
+# Controllo privilegi di root
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Errore: Questo script deve essere eseguito come root (sudo).${NC}"
     exit 1
 fi
+
+# ==============================================================================
+# 0. CONFIGURAZIONE INIZIALE: ENCODING UTF-8, TIMEZONE, TASTIERA E LINGUA
+# ==============================================================================
+echo -e "${BLUE}======================================================================${NC}"
+echo -e "${GREEN}    Configurazione Iniziale di Sistema (Encoding, Timezone, Tastiera)${NC}"
+echo -e "${BLUE}======================================================================${NC}"
+
+# Imposizione forzata UTF-8 nelle variabili di shell e ambiente
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+export LANGUAGE=en_US.UTF-8
+
+echo "LANG=en_US.UTF-8" > /etc/default/locale
+echo "LC_ALL=en_US.UTF-8" >> /etc/default/locale
+echo "LANGUAGE=en_US.UTF-8" >> /etc/default/locale
+
+# Assicura pacchetti essenziali per configurazione
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y sudo curl wget locales tzdata keyboard-configuration
+
+# 1. Selezione interattiva del Fuso Orario (tzdata)
+echo -e "\n${YELLOW}>>> Configurazione del fuso orario (Timezone)...${NC}"
+export DEBIAN_FRONTEND=dialog
+dpkg-reconfigure tzdata
+
+# 2. Selezione interattiva della Tastiera (keyboard-configuration)
+echo -e "\n${YELLOW}>>> Configurazione della disposizione della tastiera...${NC}"
+dpkg-reconfigure keyboard-configuration
+
+# 3. Generazione e impostazione dei Locales UTF-8
+echo -e "\n${YELLOW}>>> Configurazione dei Locales di sistema (UTF-8)...${NC}"
+locale-gen en_US.UTF-8 it_IT.UTF-8 >/dev/null 2>&1 || true
+update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get upgrade -y
 
 echo -e "${BLUE}======================================================================${NC}"
 echo -e "${GREEN}    Installer Odoo + OCA Repos (Ubuntu/Debian Bare-Metal)${NC}"
@@ -85,10 +119,9 @@ calculate_tuning
 # 1. INSTALLAZIONE DIPENDENZE E POSTGRESQL
 # ==============================================================================
 echo -e "\n${BLUE}>>> Aggiornamento sistema e verifica pacchetti base...${NC}"
-apt-get update -qq
 
 PACKAGES=(
-    "locales" "git" "curl" "jq" "wget" "mc" "btop" "nano"
+    "git" "jq" "mc" "btop" "nano"
     "python3-full" "python3-dev" "python3-venv" "build-essential"
     "libpq-dev" "libxml2-dev" "libxslt1-dev" "libldap2-dev" "libsasl2-dev" "libssl-dev" "libffi-dev"
     "postgresql" "postgresql-client" "nodejs" "npm"
@@ -105,12 +138,6 @@ done
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" --no-install-recommends "${MISSING_PACKAGES[@]}"
 fi
-
-echo -e "\n${BLUE}>>> Configurazione del Locale di sistema (en_US.UTF-8)...${NC}"
-locale-gen en_US.UTF-8 >/dev/null
-update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
 
 if ! command -v rtlcss > /dev/null; then npm install -g rtlcss >/dev/null 2>&1; fi
 if ! command -v wkhtmltopdf > /dev/null; then
@@ -167,7 +194,7 @@ sudo -u "$OE_USER" "$PIP_CMD" install -r "$OE_HOME_EXT/requirements.txt" >/dev/n
 echo -e "\n${BLUE}>>> Controllo lista repository da '$OCA_LIST_FILE'...${NC}"
 
 if [ ! -f "$OCA_LIST_FILE" ]; then
-    echo -e "${YELLOW}File '$OCA_LIST_FILE' non trovato. Tentro generazione via ./oca_indexer.sh...${NC}"
+    echo -e "${YELLOW}File '$OCA_LIST_FILE' non trovato. Tentativo di generazione via ./oca_indexer.sh...${NC}"
     if [ -f "$SCRIPT_DIR/oca_indexer.sh" ]; then
         bash "$SCRIPT_DIR/oca_indexer.sh"
     fi
@@ -179,14 +206,12 @@ else
     echo -e "${GREEN}Lettura dei repository in corso da '$OCA_LIST_FILE'...${NC}"
     
     while IFS= read -r REPO_URL || [ -n "$REPO_URL" ]; do
-        # Rimuove spazi vuoti o righe commentate
         REPO_URL=$(echo "$REPO_URL" | tr -d '\r' | xargs)
         [[ -z "$REPO_URL" || "$REPO_URL" =~ ^# ]] && continue
 
         REPO_NAME=$(basename "$REPO_URL" .git)
         TARGET_DIR="$OCA_REPOS_DIR/$REPO_NAME"
 
-        # Verifica se il branch per la versione selezionata esiste sul repository GitHub
         BRANCH_EXISTS=$(git ls-remote --heads "$REPO_URL" "$OE_VERSION" 2>/dev/null | wc -l)
         if [ "$BRANCH_EXISTS" -eq 0 ]; then
             echo -e "${YELLOW}-> Repository $REPO_NAME: branch '$OE_VERSION' non presente. Ignorato.${NC}"
@@ -261,7 +286,6 @@ EOF
 # --- BACKUP SCRIPT ---
 cat <<EOF > "$BACKUP_SCRIPT"
 #!/bin/bash
-# Script di backup per Odoo (Database e Filestore)
 BACKUP_DIR="/opt/odoo_backups"
 DATE=\$(date +"%Y%m%d_%H%M%S")
 FILESTORE_DIR="$OE_HOME/.local/share/Odoo/filestore"
@@ -311,7 +335,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable odoo
-systemctl restart odoo
+systemctl start odoo
 
 # ==============================================================================
 # 6. GUIDA NGINX PROXY MANAGER (NPM)
@@ -364,7 +388,6 @@ EOF
 # ==============================================================================
 echo -e "\n${BLUE}>>> Avvio collaudo porte e API di Odoo...${NC}"
 
-# Attesa avvio servizio
 MAX_ATTEMPTS=30
 ATTEMPT=0
 SERVICE_UP=false
@@ -382,7 +405,6 @@ echo -e "\n${BLUE}==============================================================
 echo -e "${GREEN}                    RISULTATO VERIFICA E HEALTH CHECK${NC}"
 echo -e "${BLUE}======================================================================${NC}"
 
-# 1. Test Porta HTTP (8069)
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069 || echo "000")
 if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 302 ]; then
     echo -e "Porta HTTP Odoo (8069) : ${GREEN}ONLINE (HTTP $HTTP_CODE)${NC}"
@@ -390,7 +412,6 @@ else
     echo -e "Porta HTTP Odoo (8069) : ${RED}OFFLINE o IN ERRORE (HTTP $HTTP_CODE)${NC}"
 fi
 
-# 2. Test Endpoint API /web/health o Database Selector
 HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069/web/health || echo "000")
 DB_SELECTOR_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069/web/database/selector || echo "000")
 
@@ -402,7 +423,6 @@ else
     echo -e "API Web Interface         : ${YELLOW}NON RISPONDE ANCORA O IN INIZIALIZZAZIONE${NC}"
 fi
 
-# 3. Test API JSON-RPC
 JSON_RPC_STATUS=$(curl -s -X POST -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "method": "call", "params": {}, "id": 1}' \
   http://127.0.0.1:8069/jsonrpc | jq -r '.jsonrpc' 2>/dev/null || echo "error")
