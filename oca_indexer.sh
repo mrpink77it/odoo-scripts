@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER
+# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER (Dynamic Count & Robust Parser)
 # ==============================================================================
 
 set -e
@@ -48,11 +48,11 @@ check_dependencies() {
 check_dependencies
 
 # ------------------------------------------------------------------------------
-# 1. FUNZIONE: Lettura di tutti i moduli dall'App Store OCA (Pagine 1 - 30)
+# 1. FUNZIONE: Scansione dinamica dell'App Store OCA (Pagine illimitate con Count)
 # ------------------------------------------------------------------------------
 fetch_all_modules() {
-    echo -e "\n${BLUE}>>> Avvio scansione completa dell'App Store OCA (7.200+ moduli)...${NC}"
-    echo -e "${YELLOW}Questo processo interroga le 30 pagine ufficiali dell'App Store OCA.${NC}"
+    echo -e "\n${BLUE}>>> Avvio scansione dinamica dell'App Store OCA...${NC}"
+    echo -e "${YELLOW}Il sistema rileverà automaticamente il numero di pagine e moduli presenti.${NC}"
     
     python3 - << 'EOF'
 import urllib.request
@@ -63,58 +63,72 @@ import os
 data_dir = "./oca_data"
 output_csv = os.path.join(data_dir, "all_oca_modules.csv")
 
-headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 modules_list = []
 
-print("Connessione all'App Store OCA in corso (da pagina 1 a 30)...")
+page = 1
+per_page = 250
 
-for page in range(1, 31):
-    url = f"https://apps.odoo-community.org/modules?per_page=250&page={page}"
+print("Connessione all'App Store OCA in corso...")
+
+while page <= 100:
+    url = f"https://apps.odoo-community.org/modules?per_page={per_page}&page={page}"
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req) as response:
             html = response.read().decode('utf-8')
             
-            # Suddivisione in blocchi per estrarre i moduli dalla pagina HTML
-            module_blocks = re.split(r'<h3><a href="/modules/', html)
-            for block in module_blocks[1:]:
+            if '/modules/' not in html:
+                break
+                
+            cards = re.split(r'href="/modules/', html)
+            if len(cards) <= 1:
+                break
+                
+            page_modules_count = 0
+            for card in cards[1:]:
                 try:
-                    tech_name = block.split('"')[0]
-                    title_part = block.split('</a></h3>')[0]
-                    title = title_part.split('>')[-1]
+                    tech_name = card.split('"')[0].strip()
+                    if not tech_name or '/' in tech_name or '?' in tech_name or '#' in tech_name:
+                        continue
+                        
+                    title_match = re.search(r'>(.*?)</a></h3>', card, re.DOTALL)
+                    title = title_match.group(1) if title_match else tech_name
+                    title = re.sub(r'<[^>]+>', '', title).strip()
                     
-                    # Estrazione repository GitHub
-                    repo_match = re.search(r'github\.com/OCA/([^/"]+)', block)
+                    repo_match = re.search(r'github\.com/OCA/([^/"]+)', card)
                     repo = repo_match.group(1) if repo_match else ""
                     
-                    # Estrazione versioni supportate (es. 14.0 - 20.0)
-                    versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', block)
+                    versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', card)
                     versions = ",".join(sorted(list(set(versions_found)), reverse=True))
                     
-                    # URL GitHub completo
-                    gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', block)
+                    gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', card)
                     github_url = gh_match.group(1) if gh_match else (f"https://github.com/OCA/{repo}/tree/master/{tech_name}" if repo else "")
                     
-                    # Categoria
-                    cat_match = re.search(r'/categories/([^"]+)"', block)
+                    cat_match = re.search(r'/categories/([^"]+)"', card)
                     category = cat_match.group(1) if cat_match else ""
                     
                     if tech_name and not any(m['technical_name'] == tech_name for m in modules_list):
                         modules_list.append({
                             "technical_name": tech_name,
-                            "title": title.strip(),
+                            "title": title,
                             "repo": repo,
                             "author": "OCA",
                             "category": category,
                             "versions": versions,
                             "github_url": github_url
                         })
+                        page_modules_count += 1
                 except Exception:
                     continue
 
-            print(f"Pagina {page}/30 elaborata (Moduli totali raccolti: {len(modules_list)})...")
+            print(f"Pagina {page} elaborata ({page_modules_count} moduli trovati - Totale: {len(modules_list)})...")
+            
+            if page_modules_count == 0:
+                break
+            page += 1
     except Exception as e:
-        print(f"Nota alla pagina {page}: {e}")
+        print(f"Interrotto alla pagina {page}: {e}")
         break
 
 if modules_list:
@@ -123,9 +137,9 @@ if modules_list:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(modules_list)
-    print(f"\n✅ Salvataggio completato: {len(modules_list)} moduli salvati in '{output_csv}'.")
+    print(f"\n✅ Scansione completata con successo: {len(modules_list)} moduli totali salvati in '{output_csv}'.")
 else:
-    print("\n⚠️ Impossibile estrarre i moduli. Verifica la connessione di rete.")
+    print("\n⚠️ Nessun modulo estratto. Controlla la connessione o la struttura HTML.")
 EOF
 }
 
@@ -296,7 +310,7 @@ while true; do
     echo -e "\n${BLUE}======================================================================${NC}"
     echo -e "${GREEN}      OCA MODULES & REPOSITORY MANAGER FOR INSTALLER${NC}"
     echo -e "${BLUE}======================================================================${NC}"
-    echo "1. Scarica / Aggiorna indice di TUTTI i moduli OCA (App Store Pagine 1-30)"
+    echo "1. Scarica / Aggiorna indice di TUTTI i moduli OCA (Conteggio dinamico pagine)"
     echo "2. Filtra ed estrai moduli per specifica versione Odoo (14.0 - 20.0)"
     echo "3. Ricostruisci mappa completa dei Repository GitHub OCA"
     echo "4. Seleziona Repo per l'installer automatico e versione Odoo"
