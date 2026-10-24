@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER (Robust Card Parser)
+# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER (Definitive Parser)
 # ==============================================================================
 
 set -e
@@ -81,7 +81,7 @@ check_dependencies() {
 check_dependencies
 
 # ------------------------------------------------------------------------------
-# 1. FUNZIONE: Scansione dinamica dell'App Store OCA (Parsing Schede Modulo)
+# 1. FUNZIONE: Scansione dinamica dell'App Store OCA
 # ------------------------------------------------------------------------------
 fetch_all_modules() {
     echo -e "\n${BLUE}>>> Avvio scansione dinamica dell'App Store OCA...${NC}"
@@ -131,45 +131,52 @@ for page in range(1, total_pages + 1):
         with urllib.request.urlopen(req) as response:
             html = response.read().decode('utf-8')
             
-            # Suddivisione precisa basata sulle intestazioni delle schede modulo
-            cards = re.split(r'<h3><a href="/modules/', html)
+            # Estrazione robusta basata sui link dei moduli
+            # Ogni modulo ha un blocco che inizia con href="/modules/NOME_TECNICO"
+            pattern = r'href="/modules/([^"/]+)"([^>]*>.*?)(?=href="/modules/|$)'
+            matches = re.findall(pattern, html, re.DOTALL)
             
             page_modules_count = 0
-            for card in cards[1:]:
-                try:
-                    tech_name = card.split('"')[0].strip()
-                    if not tech_name or '/' in tech_name or '?' in tech_name or '#' in tech_name:
-                        continue
-                        
-                    title_match = re.search(r'>(.*?)</a></h3>', card, re.DOTALL)
-                    title = title_match.group(1) if title_match else tech_name
-                    title = re.sub(r'<[^>]+>', '', title).strip()
-                    
-                    repo_match = re.search(r'github\.com/OCA/([^/"]+)', card)
-                    repo = repo_match.group(1) if repo_match else ""
-                    
-                    versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', card)
-                    versions = ",".join(sorted(list(set(versions_found)), reverse=True))
-                    
-                    gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', card)
-                    github_url = gh_match.group(1) if gh_match else (f"https://github.com/OCA/{repo}/tree/master/{tech_name}" if repo else "")
-                    
-                    cat_match = re.search(r'/categories/([^"]+)"', card)
-                    category = cat_match.group(1) if cat_match else ""
-                    
-                    if tech_name and not any(m['technical_name'] == tech_name for m in modules_list):
-                        modules_list.append({
-                            "technical_name": tech_name,
-                            "title": title,
-                            "repo": repo,
-                            "author": "OCA",
-                            "category": category,
-                            "versions": versions,
-                            "github_url": github_url
-                        })
-                        page_modules_count += 1
-                except Exception:
+            for tech_name, block in matches:
+                if not tech_name or tech_name in ['categories', 'sponsors']:
                     continue
+                
+                # Estrazione titolo
+                title_match = re.search(r'>(.*?)</a></h3>', block, re.DOTALL)
+                if not title_match:
+                    title_match = re.search(r'>(.*?)</a>', block, re.DOTALL)
+                title = title_match.group(1) if title_match else tech_name
+                title = re.sub(r'<[^>]+>', '', title).strip()
+                
+                # Repository GitHub
+                repo_match = re.search(r'github\.com/OCA/([^/"]+)', block)
+                repo = repo_match.group(1) if repo_match else ""
+                
+                # Versioni Odoo supportate
+                versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', block)
+                if not versions_found:
+                    versions_found = re.findall(r'>(1[0-9]\.0|\d{2}\.0)<', block)
+                versions = ",".join(sorted(list(set(versions_found)), reverse=True))
+                
+                # URL GitHub completo
+                gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', block)
+                github_url = gh_match.group(1) if gh_match else (f"https://github.com/OCA/{repo}/tree/master/{tech_name}" if repo else "")
+                
+                # Categoria
+                cat_match = re.search(r'/categories/([^"]+)"', block)
+                category = cat_match.group(1) if cat_match else ""
+                
+                if tech_name and not any(m['technical_name'] == tech_name for m in modules_list):
+                    modules_list.append({
+                        "technical_name": tech_name,
+                        "title": title,
+                        "repo": repo,
+                        "author": "OCA",
+                        "category": category,
+                        "versions": versions,
+                        "github_url": github_url
+                    })
+                    page_modules_count += 1
 
             print(f"Pagina {page}/{total_pages} elaborata ({page_modules_count} moduli - Totale accumulato: {len(modules_list)})...")
             
