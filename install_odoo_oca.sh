@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# INSTALLER ODOO + OCA SYNC (Bare-Metal Ubuntu/Debian)
-# Con configurazione iniziale: Timezone, Tastiera, Locali e UTF-8 Forzato
+# INSTALLER ODOO + ALL-IN-ONE OCA INDEXER & SYNC (Bare-Metal Ubuntu/Debian)
+# Integrato con: Auto-Indexer, Timezone, Tastiera, UTF-8, Logrotate e Health Check
 # ==============================================================================
 
 set -e
@@ -55,7 +55,7 @@ echo "LANGUAGE=en_US.UTF-8" >> /etc/default/locale
 # Assicura pacchetti essenziali per configurazione
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y sudo curl wget locales tzdata keyboard-configuration
+apt-get install -y sudo curl wget locales tzdata keyboard-configuration python3 python3-pip jq
 
 # 1. Selezione interattiva del Fuso Orario (tzdata)
 echo -e "\n${YELLOW}>>> Configurazione del fuso orario (Timezone)...${NC}"
@@ -74,6 +74,65 @@ update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get upgrade -y
+
+# ==============================================================================
+# 0.1 INTEGRATED OCA INDEXER (Generazione Automatica di oca.txt)
+# ==============================================================================
+echo -e "\n${BLUE}======================================================================${NC}"
+echo -e "${GREEN}    Scansione Automatica Repository Ufficiali OCA (via GitHub API)${NC}"
+echo -e "${BLUE}======================================================================${NC}"
+
+python3 - << EOF
+import urllib.request
+import json
+import os
+
+output_txt = "$OCA_LIST_FILE"
+headers = {'User-Agent': 'Odoo-OCA-Indexer', 'Accept': 'application/vnd.github.v3+json'}
+urls_list = []
+page = 1
+per_page = 100
+
+print("Connessione alle API GitHub (OCA Organization)...")
+
+while True:
+    url = f"https://api.github.com/orgs/OCA/repos?per_page={per_page}&page={page}"
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if not data:
+                break
+            
+            for r in data:
+                repo_name = r.get("name", "").lower()
+                html_url = r.get("html_url", "")
+                
+                # Esclusione unit test, openupgrade, .github e OCB
+                if "test" in repo_name or "openupgrade" in repo_name or repo_name == ".github" or repo_name == "ocb":
+                    continue
+                
+                if html_url and html_url not in urls_list:
+                    urls_list.append(html_url)
+            
+            print(f"Pagina GitHub {page} elaborata ({len(data)} repository analizzati)...")
+            if len(data) < per_page:
+                break
+            page += 1
+    except Exception as e:
+        print(f"⚠️ Errore durante l'interrogazione delle API GitHub: {e}")
+        break
+
+if urls_list:
+    urls_list = sorted(list(set(urls_list)))
+    with open(output_txt, 'w', encoding='utf-8') as f:
+        for url in urls_list:
+            f.write(f"{url}\n")
+    print(f"✅ Indice generato con successo in '{output_txt}'.")
+    print(f"📦 Totale repository OCA pronti per la sincronizzazione: {len(urls_list)}")
+else:
+    print("❌ Attenzione: Nessun repository recuperato. Si proseguirà con l'installazione base.")
+EOF
 
 echo -e "${BLUE}======================================================================${NC}"
 echo -e "${GREEN}    Installer Odoo + OCA Repos (Ubuntu/Debian Bare-Metal)${NC}"
@@ -191,20 +250,9 @@ sudo -u "$OE_USER" "$PIP_CMD" install -r "$OE_HOME_EXT/requirements.txt" >/dev/n
 # ==============================================================================
 # 4. DOWNLOAD E SINCRONIZZAZIONE MODULI OCA DA oca.txt
 # ==============================================================================
-echo -e "\n${BLUE}>>> Controllo lista repository da '$OCA_LIST_FILE'...${NC}"
+echo -e "\n${BLUE}>>> Sincronizzazione repository OCA da '$OCA_LIST_FILE'...${NC}"
 
-if [ ! -f "$OCA_LIST_FILE" ]; then
-    echo -e "${YELLOW}File '$OCA_LIST_FILE' non trovato. Tentativo di generazione via ./oca_indexer.sh...${NC}"
-    if [ -f "$SCRIPT_DIR/oca_indexer.sh" ]; then
-        bash "$SCRIPT_DIR/oca_indexer.sh"
-    fi
-fi
-
-if [ ! -f "$OCA_LIST_FILE" ]; then
-    echo -e "${RED}Errore: Impossibile trovare o generare '$OCA_LIST_FILE'. Annullamento sincronizzazione OCA.${NC}"
-else
-    echo -e "${GREEN}Lettura dei repository in corso da '$OCA_LIST_FILE'...${NC}"
-    
+if [ -f "$OCA_LIST_FILE" ]; then
     while IFS= read -r REPO_URL || [ -n "$REPO_URL" ]; do
         REPO_URL=$(echo "$REPO_URL" | tr -d '\r' | xargs)
         [[ -z "$REPO_URL" || "$REPO_URL" =~ ^# ]] && continue
@@ -241,6 +289,8 @@ else
             fi
         fi
     done < "$OCA_LIST_FILE"
+else
+    echo -e "${YELLOW}File '$OCA_LIST_FILE' vuoto o non trovato. Saltata sincronizzazione OCA.${NC}"
 fi
 
 # ==============================================================================
@@ -335,7 +385,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable odoo
-systemctl start odoo
+systemctl restart odoo
 
 # ==============================================================================
 # 6. GUIDA NGINX PROXY MANAGER (NPM)
