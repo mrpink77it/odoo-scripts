@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER (Dynamic Count & Robust Parser)
+# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER (Robust Parser)
 # ==============================================================================
 
 set -e
@@ -48,11 +48,11 @@ check_dependencies() {
 check_dependencies
 
 # ------------------------------------------------------------------------------
-# 1. FUNZIONE: Scansione dinamica dell'App Store OCA (Pagine illimitate con Count)
+# 1. FUNZIONE: Scansione dinamica dell'App Store OCA (Pagine 1-30+)
 # ------------------------------------------------------------------------------
 fetch_all_modules() {
     echo -e "\n${BLUE}>>> Avvio scansione dinamica dell'App Store OCA...${NC}"
-    echo -e "${YELLOW}Il sistema rileverà automaticamente il numero di pagine e moduli presenti.${NC}"
+    echo -e "${YELLOW}Il sistema interroga le pagine dell'App Store rilevando automaticamente i moduli.${NC}"
     
     python3 - << 'EOF'
 import urllib.request
@@ -71,58 +71,63 @@ per_page = 250
 
 print("Connessione all'App Store OCA in corso...")
 
-while page <= 100:
+while page <= 40:
     url = f"https://apps.odoo-community.org/modules?per_page={per_page}&page={page}"
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req) as response:
             html = response.read().decode('utf-8')
             
-            if '/modules/' not in html:
-                break
-                
-            cards = re.split(r'href="/modules/', html)
-            if len(cards) <= 1:
+            # Pattern di ricerca per i moduli nell'HTML dell'App Store OCA
+            # Ogni modulo ha un blocco con href="/modules/NOME_TECNICO"
+            matches = re.findall(r'href="/modules/([^"]+)"([^>]*>.*?)(?=href="/modules/|$)', html, re.DOTALL)
+            
+            if not matches and 'items found' not in html:
                 break
                 
             page_modules_count = 0
-            for card in cards[1:]:
-                try:
-                    tech_name = card.split('"')[0].strip()
-                    if not tech_name or '/' in tech_name or '?' in tech_name or '#' in tech_name:
-                        continue
-                        
-                    title_match = re.search(r'>(.*?)</a></h3>', card, re.DOTALL)
-                    title = title_match.group(1) if title_match else tech_name
-                    title = re.sub(r'<[^>]+>', '', title).strip()
-                    
-                    repo_match = re.search(r'github\.com/OCA/([^/"]+)', card)
-                    repo = repo_match.group(1) if repo_match else ""
-                    
-                    versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', card)
-                    versions = ",".join(sorted(list(set(versions_found)), reverse=True))
-                    
-                    gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', card)
-                    github_url = gh_match.group(1) if gh_match else (f"https://github.com/OCA/{repo}/tree/master/{tech_name}" if repo else "")
-                    
-                    cat_match = re.search(r'/categories/([^"]+)"', card)
-                    category = cat_match.group(1) if cat_match else ""
-                    
-                    if tech_name and not any(m['technical_name'] == tech_name for m in modules_list):
-                        modules_list.append({
-                            "technical_name": tech_name,
-                            "title": title,
-                            "repo": repo,
-                            "author": "OCA",
-                            "category": category,
-                            "versions": versions,
-                            "github_url": github_url
-                        })
-                        page_modules_count += 1
-                except Exception:
+            for tech_name, block in matches:
+                if not tech_name or '/' in tech_name or '?' in tech_name or '#' in tech_name or 'categories' in tech_name:
                     continue
+                
+                # Titolo
+                title_match = re.search(r'<h3>.*?>(.*?)</a></h3>', block, re.DOTALL)
+                if not title_match:
+                    title_match = re.search(r'>(.*?)</a></h3>', block, re.DOTALL)
+                title = title_match.group(1) if title_match else tech_name
+                title = re.sub(r'<[^>]+>', '', title).strip()
+                
+                # Repository GitHub
+                repo_match = re.search(r'github\.com/OCA/([^/"]+)', block)
+                repo = repo_match.group(1) if repo_match else ""
+                
+                # Versioni Odoo supportate
+                versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', block)
+                if not versions_found:
+                    versions_found = re.findall(r'>(1[0-9]\.0|\d{2}\.0)<', block)
+                versions = ",".join(sorted(list(set(versions_found)), reverse=True))
+                
+                # URL GitHub completo
+                gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', block)
+                github_url = gh_match.group(1) if gh_match else (f"https://github.com/OCA/{repo}/tree/master/{tech_name}" if repo else "")
+                
+                # Categoria
+                cat_match = re.search(r'/categories/([^"]+)"', block)
+                category = cat_match.group(1) if cat_match else ""
+                
+                if tech_name and not any(m['technical_name'] == tech_name for m in modules_list):
+                    modules_list.append({
+                        "technical_name": tech_name,
+                        "title": title,
+                        "repo": repo,
+                        "author": "OCA",
+                        "category": category,
+                        "versions": versions,
+                        "github_url": github_url
+                    })
+                    page_modules_count += 1
 
-            print(f"Pagina {page} elaborata ({page_modules_count} moduli trovati - Totale: {len(modules_list)})...")
+            print(f"Pagina {page} elaborata ({page_modules_count} moduli trovati - Totale accumulato: {len(modules_list)})...")
             
             if page_modules_count == 0:
                 break
