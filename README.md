@@ -1,97 +1,55 @@
-# Odoo & OCA Deployer
+# Odoo Installer
 
-![OS](https://img.shields.io/badge/OS-Ubuntu%20%7C%20Debian-blue)
-![Odoo](https://img.shields.io/badge/Odoo-15.0%20%7C%2016.0%20%7C%2017.0%20%7C%2018.0-purple)
+![OS](https://img.shields.io/badge/OS-Ubuntu%2022.04%20%7C%2024.04%20%7C%2026.04%20%7C%20Debian%2012%20%7C%2013-blue)
+![Odoo](https://img.shields.io/badge/Odoo-8.0%20to%2020.0-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Uno script di automazione Bash interattivo per l'installazione e l'ottimizzazione in produzione di **Odoo ERP** e dei moduli **OCA (Odoo Community Association)** su server Linux bare-metal. 
-
-Questo tool è progettato specificamente per infrastrutture di produzione dove le prestazioni hardware native, la stabilità dei servizi di sistema (`systemd`) e l'ottimizzazione del database sono preferite rispetto agli approcci containerizzati.
-
-## ✨ Caratteristiche Principali
-
-* 🖥️ **Hardware Auto-Tuning:** Calcola dinamicamente le risorse del server (CPU, RAM) per ottimizzare i parametri di PostgreSQL (`shared_buffers`, `effective_cache_size`) e i `workers` di Odoo.
-* 📦 **Gestione Selettiva OCA:** Permette di scegliere se scaricare solo i moduli OCA più utilizzati o l'intero ecosistema, riducendo drasticamente i tempi di clone e l'uso del disco.
-* 🇮🇹 **Localizzazione Smart:** Modulo `l10n-italy` incluso di default, con possibilità di aggiungere altre localizzazioni internazionali in modo interattivo.
-* 🛡️ **Hardening per la Produzione:** Generazione automatica di script per i backup, rotazione dei log (Logrotate) e configurazione per Reverse Proxy.
-* 🌐 **Nginx Proxy Manager Ready:** Genera una guida locale con i parametri esatti per l'esposizione sicura tramite NPM (Websockets, Longpolling, Timeout).
+Script di automazione Bash per l'installazione, l'aggiornamento e l'ottimizzazione di Odoo ERP e dei moduli OCA su ambienti bare-metal (Ubuntu/Debian).
 
 ---
 
-## 🚀 Requisiti
+## 🌐 Informazioni su Odoo e l'Ecosistema
 
-* **Sistema Operativo:** Ubuntu 22.04/24.04 LTS o Debian 12/13.
-* **Privilegi:** Accesso di `root` o utente con privilegi `sudo`.
-* **Risorse Minime:** 2 CPU Cores, 2GB RAM (Consigliati: 4+ CPU, 8GB+ RAM per ambienti di produzione).
+**Odoo** è una delle suite di software gestionale (ERP/CRM) open-source più diffuse al mondo, basata su un'architettura modulare in Python e PostgreSQL. Consente di gestire qualsiasi processo aziendale (contabilità, vendite, magazzino, produzione, e-commerce) attraverso moduli integrati.
 
----
-
-## 🛠️ Utilizzo
-
-Esegui il comando nella tua shell
-
-   ```bash
-   sudo apt install git -y && git clone https://github.com/mrpink77it/odoo-scripts.git && cd odoo-scripts && sudo chmod +x *.sh && sudo ./install_odoo_oca.sh
-   ```
-Segui le istruzioni a schermo per selezionare la versione di Odoo e i repository OCA desiderati.
+### Le Associazioni di Riferimento
+* **[OCA (Odoo Community Association)](https://odoo-community.org/):** Organizzazione internazionale senza scopo di lucro che promuove ilர்களில் sviluppo collaborativo delle funzionalità di Odoo e supporta la crescita della community globale attraverso la manutenzione di migliaia di repository di moduli testati e indipendenti dal vendor.
+* **[Odoo Italia (odoo-italia.org)](https://www.odoo-italia.org/):** L'associazione di riferimento per il mercato italiano. Svolge un lavoro fondamentale di aggregazione della community nazionale, promozione delle normative fiscali italiane (come la fatturazione elettronica e i registri IVA), coordinamento della localizzazione e divulgazione delle best practices per l'adozione di Odoo nelle aziende italiane.
 
 ---
 
-## 🧠 Logica di Funzionamento 
+## 🚀 1. Script Principale: `install_odoo_oca.sh`
 
-Lo script non si limita a installare i pacchetti, ma orchestra l'intero ambiente seguendo una logica in 6 fasi:
+Gestisce l'intero ciclo di vita dell'installazione, la sincronizzazione dei moduli e gli aggiornamenti di sistema.
 
-### 1. Interazione e Scelta Architettura
-Lo script interroga l'operatore tramite un'interfaccia a menu per definire il target della build:
-* Rileva la versione di Odoo desiderata (15.0 - 18.0).
-* Definisce il footprint dell'installazione OCA (Standard "Core" vs Full).
-* Inietta le dipendenze di localizzazione specifiche (`l10n-italy` forzata come base).
-
-### 2. Auto-Tuning delle Risorse
-Tramite i comandi `free -m` e `nproc`, lo script mappa l'hardware fisico del server. 
-* Alloca il 25% della RAM totale a `shared_buffers` e il 75% a `effective_cache_size` per PostgreSQL.
-* Calcola il numero aureo dei *workers* di Odoo con la formula `(CPU Cores * 2) + 1` per bilanciare il carico HTTP e i job asincroni senza creare colli di bottiglia nel multiprocessing.
-
-### 3. Preparazione OS e Database
-* Forza la disabilitazione dei prompt interattivi di APT (`DEBIAN_FRONTEND=noninteractive`).
-* Installa dipendenze di compilazione (build-essential, librerie dev) e tool di rendering (wkhtmltopdf).
-* Genera la configurazione `locale` in `en_US.UTF-8` per prevenire crash nell'elaborazione di stringhe in Odoo.
-* Crea un utente di sistema isolato (`odoo`) e il relativo ruolo in PostgreSQL.
-
-### 4. Git Clone e Virtual Environment (VENV)
-Odoo non viene installato globalmente. Lo script genera un ambiente virtuale Python isolato (`/opt/odoo/venv`) per evitare conflitti con i pacchetti di sistema (PEP 668 compliance). Successivamente, clona il core di Odoo e crea link simbolici per i moduli OCA verso la directory `custom_addons`.
-
-### 5. Deployment dei Servizi di Manutenzione
-Per garantire la stabilità a lungo termine, lo script scrive direttamente sul filesystem tre componenti fondamentali:
-* **`odoo.service`**: Demone Systemd per il controllo del ciclo di vita dell'applicazione.
-* **`logrotate.d/odoo`**: Regola per comprimere i log giornalmente e trattenerli per 14 giorni.
-* **`odoo_backup.sh`**: Script bash che esegue il `pg_dump` strutturato e il `tar` del filestore, implementando una *retention policy* automatica di 7 giorni.
-
-### 6. Configurazione Reverse Proxy
-Lo script imposta `proxy_mode = True` in `odoo.conf` e rilascia un file in `/opt/guida_npm_odoo.txt`. Questa guida contiene gli header Nginx (`X-Forwarded-For`, `Upgrade`) e i parametri di timeout necessari per gestire i Websocket (porta 8072) ed evitare errori `504 Gateway Timeout` durante la generazione di report PDF massivi.
+### Funzioni e Logica di Esecuzione
+* **Controllo Installazione Esistente (Porta 8069):**
+  * Rileva se Odoo è già attivo. In caso positivo, richiede se avviare la procedura di aggiornamento completo (`apt dist-upgrade`, stop servizio, sync OCA, aggiornamento core Odoo, esecuzione con `-u all`, visualizzazione log in tempo reale e opzione di riavvio finale).
+* **Configurazione Iniziale di Sistema:**
+  * Configura forzatamente l'encoding `UTF-8` (`en_US.UTF-8`), gestisce il fuso orario (`tzdata`) e imposta il layout della tastiera.
+* **Auto-Indexer OCA Integrato:**
+  * Interroga le API di GitHub per generare automaticamente o leggere il file `oca.txt`, escludendo i repository di unit test, `openupgrade`, `.github` e `OCB`.
+* **Sincronizzazione Moduli e Dipendenze:**
+  * Seleziona la versione di Odoo (dalla `8.0` alla `20.0`).
+  * Esegue `clone` o `pull` dei repository OCA filtrati per branch, crea automaticamente i link simbolici dei moduli in `custom_addons` e allinea le dipendenze Python leggendo i file `requirements.txt`.
+* **Hardening e Servizi:**
+  * Configura l'auto-tuning iniziale per PostgreSQL e Odoo, genera lo script di backup automatizzato (`odoo_backup.sh`), la rotazione dei log (`logrotate`) e il demone `systemd`.
+* **Health Check & Collaudo Finale:**
+  * Verifica lo stato operativo della porta HTTP (`8069`), risponde ai test sulle API web (`/web/health`, `/web/database/selector`) e convalida l'endpoint JSON-RPC.
 
 ---
 
-## 📂 Struttura delle Directory Generata
+## ⚡ 2. Script di Ottimizzazione: `odoo_optimizer.sh`
 
-```text
-/opt/
- ├── odoo/
- │    ├── odoo-server/       # Core Odoo clonata da GitHub
- │    ├── odoo_repos/        # Repository completi OCA
- │    ├── custom_addons/     # Link simbolici dei moduli OCA (pulizia)
- │    └── venv/              # Ambiente Virtuale Python
- ├── scripts/
- │    └── odoo_backup.sh     # Script di backup automatizzato
- └── guida_npm_odoo.txt      # Parametri Nginx Proxy Manager
-```
+Script autonomo dedicato all'auto-tuning avanzato delle performance e al benchmarking di PostgreSQL e Odoo.
 
-
----
-## 🤝 Contribuire
-
-Sentiti libero di aprire Issue o inviare Pull Request per migliorare il tuning hardware o aggiungere nuovi set di repository OCA raccomandati.
-
-## 📄 Licenza
-
-Distribuito sotto licenza MIT. Vedi `LICENSE` per maggiori informazioni.
+### Funzioni e Logica di Esecuzione
+* **Hardware Auto-Tuning Dinamico:**
+  * Mappa la RAM e i core CPU (`nproc`) per calcolare e iniettare i parametri ottimali in `postgresql.conf` (`shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem`, `max_connections`) e in `odoo.conf` (`workers`).
+* **Opzioni CLI di Controllo:**
+  * `--test`: Esegue una simulazione (dry-run) generando un report con i consigli di tuning senza modificare alcun file o riavviare i servizi.
+  * `--debug`: Attiva il tracciamento atomico e verboso in tempo reale (`set -x`).
+  * `--help` / `-h`: Visualizza il manuale d'uso integrato.
+* **Benchmark Integrato:**
+  * Esegue test transazionali sul database tramite `pgbench` (misurazione delle Transazioni Per Secondo - TPS).
+  * Esegue stress test HTTP sulla porta `8069` tramite `ab` (Apache Bench) per verificare la reattività dei worker.
