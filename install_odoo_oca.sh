@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # INSTALLER ODOO + ALL-IN-ONE OCA INDEXER & SYNC (Bare-Metal Ubuntu/Debian)
-# Con Controllo Rigoroso requirements.txt Post-Clone/Pull, Update & Health Check
+# Con Correzione Ordine Locales, Timezone, Tastiera, Update & Health Check
 # ==============================================================================
 
 set -e
@@ -134,7 +134,6 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
                         fi
                     done
                     
-                    # Verifica e installazione requirements.txt aggiornato
                     if [ -f "$TARGET_DIR/requirements.txt" ]; then
                         echo -e "  -> Aggiornamento dipendenze Python per ${GREEN}$REPO_NAME${NC}..."
                         sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" >/dev/null 2>&1 || true
@@ -193,12 +192,23 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
 fi
 
 # ==============================================================================
-# 0. CONFIGURAZIONE INIZIALE (Nuova Installazione)
+# 0. CONFIGURAZIONE INIZIALE (Nuova Installazione & Correzione Locales)
 # ==============================================================================
 echo -e "${BLUE}======================================================================${NC}"
-echo -e "${GREEN}    Configurazione Iniziale di Sistema (Encoding, Timezone, Tastiera)${NC}"
+echo -e "${GREEN}    Configurazione Iniziale di Sistema (Locales, Timezone, Tastiera)${NC}"
 echo -e "${BLUE}======================================================================${NC}"
 
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y sudo curl wget locales tzdata keyboard-configuration python3 python3-pip jq
+
+# 1. Generazione corretta dei Locales PRIMA di esportarli
+echo -e "\n${YELLOW}>>> Generazione dei Locales di sistema (UTF-8)...${NC}"
+sed -i '/en_US.UTF-8 UTF-8/s/^# //' /etc/locale.gen
+locale-gen en_US.UTF-8 it_IT.UTF-8 >/dev/null 2>&1 || true
+update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 LANGUAGE=en_US.UTF-8
+
+# Esportazione sicura delle variabili d'ambiente post-generazione
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
@@ -207,20 +217,14 @@ echo "LANG=en_US.UTF-8" > /etc/default/locale
 echo "LC_ALL=en_US.UTF-8" >> /etc/default/locale
 echo "LANGUAGE=en_US.UTF-8" >> /etc/default/locale
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y sudo curl wget locales tzdata keyboard-configuration python3 python3-pip jq
-
+# 2. Selezione interattiva del Fuso Orario (tzdata)
 echo -e "\n${YELLOW}>>> Configurazione del fuso orario (Timezone)...${NC}"
 export DEBIAN_FRONTEND=dialog
 dpkg-reconfigure tzdata
 
+# 3. Selezione interattiva della Tastiera (keyboard-configuration)
 echo -e "\n${YELLOW}>>> Configurazione della disposizione della tastiera...${NC}"
 dpkg-reconfigure keyboard-configuration
-
-echo -e "\n${YELLOW}>>> Configurazione dei Locales di sistema (UTF-8)...${NC}"
-locale-gen en_US.UTF-8 it_IT.UTF-8 >/dev/null 2>&1 || true
-update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -378,7 +382,6 @@ if [ -f "$OCA_LIST_FILE" ]; then
                 fi
             done
 
-            # Verifica e installazione requirements.txt per ciascun repo OCA
             if [ -f "$TARGET_DIR/requirements.txt" ]; then
                 echo -e "  -> Installazione dipendenze Python da requirements.txt per ${GREEN}$REPO_NAME${NC}..."
                 sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" >/dev/null 2>&1 || true
