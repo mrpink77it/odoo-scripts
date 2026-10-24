@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER 
+# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER
 # ==============================================================================
 
 set -e
@@ -21,102 +21,100 @@ check_dependencies() {
     echo -e "${BLUE}>>> Verifica dipendenze di sistema in corso...${NC}"
     
     MISSING_DEPS=()
-    
     if ! command -v python3 &> /dev/null; then
         MISSING_DEPS+=("python3")
     fi
-    
     if ! command -v curl &> /dev/null; then
         MISSING_DEPS+=("curl")
     fi
     
     if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
         echo -e "${YELLOW}Rilevate dipendenze mancanti: ${MISSING_DEPS[*]}. Installazione automatica...${NC}"
-        
         if command -v apt-get &> /dev/null; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq "${MISSING_DEPS[@]}"
         elif command -v yum &> /dev/null; then
             sudo yum install -y -q "${MISSING_DEPS[@]}"
         else
-            echo -e "${RED}Errore: Impossibile installare automaticamente i pacchetti. Installa manualmente: ${MISSING_DEPS[*]}${NC}"
+            echo -e "${RED}Impossibile installare automaticamente. Installa manualmente: ${MISSING_DEPS[*]}${NC}"
             exit 1
         fi
         echo -e "${GREEN}✔ Dipendenze installate con successo.${NC}"
     else
-        echo -e "${GREEN}✔ Tutte le dipendenze sono già soddisfatte.${NC}"
+        echo -e "${GREEN}✔ Tutte le dipendenze sono soddisfatte.${NC}"
     fi
 }
 
-# Esegue il controllo dipendenze all'avvio
 check_dependencies
 
 # ------------------------------------------------------------------------------
-# 1. FUNZIONE: Lettura di tutti i moduli presenti dall'App Store / API OCA
+# 1. FUNZIONE: Lettura di tutti i moduli dall'App Store OCA (Pagine 1 - 30)
 # ------------------------------------------------------------------------------
 fetch_all_modules() {
-    echo -e "\n${BLUE}>>> Avvio scansione completa dell'App Store OCA...${NC}"
-    echo -e "${YELLOW}Questo processo scarica l'indice di tutti i moduli, autori, categorie e versioni.${NC}"
+    echo -e "\n${BLUE}>>> Avvio scansione completa dell'App Store OCA (7.200+ moduli)...${NC}"
+    echo -e "${YELLOW}Questo processo interroga le 30 pagine ufficiali dell'App Store OCA.${NC}"
     
     python3 - << 'EOF'
 import urllib.request
-import json
+import re
 import csv
 import os
 
 data_dir = "./oca_data"
 output_csv = os.path.join(data_dir, "all_oca_modules.csv")
 
-headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 modules_list = []
 
-page = 1
-per_page = 250
+print("Connessione all'App Store OCA in corso (da pagina 1 a 30)...")
 
-print("Connessione all'App Store OCA in corso...")
-
-while True:
-    url = f"https://apps.odoo-community.org/api/v1/modules?per_page={per_page}&page={page}"
+for page in range(1, 31):
+    url = f"https://apps.odoo-community.org/modules?per_page=250&page={page}"
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req) as response:
-            if response.status != 200:
-                break
-            data = json.loads(response.read().decode('utf-8'))
+            html = response.read().decode('utf-8')
             
-            items = data.get('items', [])
-            if not items:
-                if isinstance(data, list):
-                    items = data
-                else:
-                    break
-            
-            for mod in items:
-                technical_name = mod.get('technical_name', mod.get('name', ''))
-                title = mod.get('title', mod.get('summary', ''))
-                repo = mod.get('repo', mod.get('repository', ''))
-                author = mod.get('author', mod.get('maintainer', 'OCA'))
-                category = mod.get('category', '')
-                versions = ",".join(mod.get('versions', []))
-                github_url = mod.get('github_url', f"https://github.com/OCA/{repo}/tree/master/{technical_name}" if repo else "")
+            # Suddivisione in blocchi per estrarre i moduli dalla pagina HTML
+            module_blocks = re.split(r'<h3><a href="/modules/', html)
+            for block in module_blocks[1:]:
+                try:
+                    tech_name = block.split('"')[0]
+                    title_part = block.split('</a></h3>')[0]
+                    title = title_part.split('>')[-1]
+                    
+                    # Estrazione repository GitHub
+                    repo_match = re.search(r'github\.com/OCA/([^/"]+)', block)
+                    repo = repo_match.group(1) if repo_match else ""
+                    
+                    # Estrazione versioni supportate (es. 14.0 - 20.0)
+                    versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', block)
+                    versions = ",".join(sorted(list(set(versions_found)), reverse=True))
+                    
+                    # URL GitHub completo
+                    gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', block)
+                    github_url = gh_match.group(1) if gh_match else (f"https://github.com/OCA/{repo}/tree/master/{tech_name}" if repo else "")
+                    
+                    # Categoria
+                    cat_match = re.search(r'/categories/([^"]+)"', block)
+                    category = cat_match.group(1) if cat_match else ""
+                    
+                    if tech_name and not any(m['technical_name'] == tech_name for m in modules_list):
+                        modules_list.append({
+                            "technical_name": tech_name,
+                            "title": title.strip(),
+                            "repo": repo,
+                            "author": "OCA",
+                            "category": category,
+                            "versions": versions,
+                            "github_url": github_url
+                        })
+                except Exception:
+                    continue
 
-                modules_list.append({
-                    "technical_name": technical_name,
-                    "title": title,
-                    "repo": repo,
-                    "author": author,
-                    "category": category,
-                    "versions": versions,
-                    "github_url": github_url
-                })
-
-            print(f"Pagina {page} elaborata ({len(items)} moduli trovati)...")
-            
-            if len(items) < per_page:
-                break
-            page += 1
+            print(f"Pagina {page}/30 elaborata (Moduli totali raccolti: {len(modules_list)})...")
     except Exception as e:
-        print(f"Completato o interrotto alla pagina {page}: {e}")
+        print(f"Nota alla pagina {page}: {e}")
         break
 
 if modules_list:
@@ -127,7 +125,7 @@ if modules_list:
         writer.writerows(modules_list)
     print(f"\n✅ Salvataggio completato: {len(modules_list)} moduli salvati in '{output_csv}'.")
 else:
-    print("\n⚠️ Impossibile raggiungere l'API remota.")
+    print("\n⚠️ Impossibile estrarre i moduli. Verifica la connessione di rete.")
 EOF
 }
 
@@ -137,7 +135,7 @@ EOF
 filter_by_version() {
     INPUT_CSV="$DATA_DIR/all_oca_modules.csv"
     if [ ! -f "$INPUT_CSV" ]; then
-        echo -e "${RED}Errore: Esegui prima la funzione 1 per scaricare il database dei moduli!${NC}"
+        echo -e "${RED}Errore: Esegui prima l'opzione 1 per scaricare il database dei moduli!${NC}"
         return 1
     fi
 
@@ -184,7 +182,7 @@ EOF
 rebuild_github_repos() {
     INPUT_CSV="$DATA_DIR/all_oca_modules.csv"
     if [ ! -f "$INPUT_CSV" ]; then
-        echo -e "${RED}Errore: Esegui prima la funzione 1 per scaricare il database dei moduli!${NC}"
+        echo -e "${RED}Errore: Esegui prima l'opzione 1 per scaricare il database dei moduli!${NC}"
         return 1
     fi
 
@@ -236,12 +234,12 @@ EOF
 }
 
 # ------------------------------------------------------------------------------
-# 4. FUNZIONE: Selezione interattiva Repo per Installer e versione Odoo
+# 4. FUNZIONE: Selezione Repo per Installer e versione Odoo
 # ------------------------------------------------------------------------------
 select_repos_for_installer() {
     REPOS_CSV="$DATA_DIR/oca_repositories_summary.csv"
     if [ ! -f "$REPOS_CSV" ]; then
-        echo -e "${RED}Errore: Esegui prima la funzione 3 per ricostruire la lista dei repository!${NC}"
+        echo -e "${RED}Errore: Esegui prima l'opzione 3 per ricostruire la mappa dei repository!${NC}"
         return 1
     fi
 
@@ -255,9 +253,7 @@ select_repos_for_installer() {
 
     OUTPUT_SELECTION="$DATA_DIR/selected_repos_v${TARGET_VER}.txt"
     echo -e "\n${BLUE}=== SELEZIONE REPOSITORY PER INSTALLER (Odoo $TARGET_VER) ===${NC}"
-    echo -e "Digita il nome dei repository che desideri includere nell'installazione."
-    echo -e "Esempio: ${GREEN}web server-tools account-financial-reporting l10n-italy${NC}"
-    echo -e "Digita '${YELLOW}ALL${NC}' per selezionare tutti i repo compatibili, oppure inserisci i nomi separati da spazio:\n"
+    echo -e "Digita i nomi dei repository separati da spazio, oppure digita '${YELLOW}ALL${NC}' per tutti:\n"
 
     read -p "Repository scelti: " USER_INPUT
 
@@ -288,20 +284,20 @@ with open(output_file, 'w', encoding='utf-8') as f:
     for repo in selected:
         f.write(f"{repo}\n")
 
-print(f"\n✅ File configurazione installer generato con successo: '{output_file}'")
+print(f"\n✅ File configurazione generato: '{output_file}'")
 print(f"📦 Repository inclusi ({len(selected)}): {', '.join(selected)}")
 EOF
 }
 
 # ------------------------------------------------------------------------------
-# MENU PRINCIPALE INTERATTIVO
+# MENU PRINCIPALE
 # ------------------------------------------------------------------------------
 while true; do
     echo -e "\n${BLUE}======================================================================${NC}"
     echo -e "${GREEN}      OCA MODULES & REPOSITORY MANAGER FOR INSTALLER${NC}"
     echo -e "${BLUE}======================================================================${NC}"
-    echo "1. Scarica / Aggiorna indice di TUTTI i moduli OCA, versioni, repo e autori"
-    echo "2. Filtra ed estrai file moduli per specifica versione Odoo (14.0 - 20.0)"
+    echo "1. Scarica / Aggiorna indice di TUTTI i moduli OCA (App Store Pagine 1-30)"
+    echo "2. Filtra ed estrai moduli per specifica versione Odoo (14.0 - 20.0)"
     echo "3. Ricostruisci mappa completa dei Repository GitHub OCA"
     echo "4. Seleziona Repo per l'installer automatico e versione Odoo"
     echo "5. Esci"
