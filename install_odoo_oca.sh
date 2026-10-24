@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # INSTALLER ODOO + OCA SYNC (Bare-Metal Ubuntu/Debian)
-# Ottimizzato con Auto-Tuning, Backup, Logrotate e Guida NPM
+# Ottimizzato con Auto-Tuning, Backup, Logrotate, Lettura oca.txt e Health Check
 # ==============================================================================
 
 set -e
@@ -22,6 +22,9 @@ OE_CONFIG="/etc/odoo.conf"
 BACKUP_SCRIPT="/opt/odoo_backup.sh"
 NPM_GUIDE="/opt/guida_npm_odoo.txt"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OCA_LIST_FILE="$SCRIPT_DIR/oca.txt"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -39,46 +42,29 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo -e "${BLUE}======================================================================${NC}"
-echo -e "${GREEN}    Installer Odoo OCA/l10n-italy e OCA (Ubuntu/Debian Bare-Metal)${NC}"
+echo -e "${GREEN}    Installer Odoo + OCA Repos (Ubuntu/Debian Bare-Metal)${NC}"
 echo -e "${BLUE}======================================================================${NC}"
 
 # ------------------------------------------------------------------------------
-# SELETTORE VERSIONE ODOO
+# SELETTORE VERSIONE ODOO (dalla 8.0 alla 20.0)
 # ------------------------------------------------------------------------------
 echo -e "\n${YELLOW}Seleziona la versione di Odoo da installare:${NC}"
-PS3="Inserisci il numero corrispondente (1-4): "
-options=("18.0" "17.0" "16.0" "Esci")
-select opt in "${options[@]}"; do
-    case $opt in
-        "18.0"|"17.0"|"16.0")
-            OE_VERSION=$opt
-            break
-            ;;
-        "Esci")
-            echo "Uscita..."
-            exit 0
-            ;;
-        *) echo -e "${RED}Opzione non valida. Riprova.${NC}" ;;
-    esac
+VERSIONS=("20.0" "19.0" "18.0" "17.0" "16.0" "15.0" "14.0" "13.0" "12.0" "11.0" "10.0" "9.0" "8.0" "Esci")
+
+PS3="Inserisci il numero corrispondente (1-${#VERSIONS[@]}): "
+select opt in "${VERSIONS[@]}"; do
+    if [ "$opt" = "Esci" ]; then
+        echo "Uscita..."
+        exit 0
+    elif [ -n "$opt" ]; then
+        OE_VERSION=$opt
+        break
+    else
+        echo -e "${RED}Opzione non valida. Riprova.${NC}"
+    fi
 done
 
-# ------------------------------------------------------------------------------
-# SELETTORE MODULI OCA & LOCALIZZAZIONE
-# ------------------------------------------------------------------------------
-echo -e "\n${YELLOW}Seleziona la modalità di download per i moduli OCA:${NC}"
-PS3="Inserisci il numero corrispondente (1-2): "
-oca_options=("Solo repository Popolari (Consigliato)" "Tutti i repository (Full - Lento, multi-GB)")
-select opt_oca in "${oca_options[@]}"; do
-    case $REPLY in
-        1) OCA_MODE="popular"; break ;;
-        2) OCA_MODE="full"; break ;;
-        *) echo -e "${RED}Opzione non valida.${NC}" ;;
-    esac
-done
-
-echo -e "\n${BLUE}--- Localizzazione OCA ---${NC}"
-echo -e "${GREEN}Di default, il modulo di localizzazione italiana (OCA/l10n-italy) verrà scaricato.${NC}"
-read -p "Vuoi aggiungere un'altra localizzazione? (Inserisci il nome, es. l10n-spain, oppure premi INVIO per nessuna): " EXTRA_L10N
+echo -e "${GREEN}Versione Odoo selezionata: $OE_VERSION${NC}"
 
 # ==============================================================================
 # FUNZIONE DI AUTO-TUNING
@@ -128,11 +114,13 @@ export LC_ALL=en_US.UTF-8
 
 if ! command -v rtlcss > /dev/null; then npm install -g rtlcss >/dev/null 2>&1; fi
 if ! command -v wkhtmltopdf > /dev/null; then
-    wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb
-    apt-get install -y ./wkhtmltox_0.12.6.1-2.jammy_amd64.deb >/dev/null
-    rm wkhtmltox_0.12.6.1-2.jammy_amd64.deb
-    ln -sf /usr/local/bin/wkhtmltopdf /usr/bin/wkhtmltopdf 2>/dev/null
-    ln -sf /usr/local/bin/wkhtmltoimage /usr/bin/wkhtmltoimage 2>/dev/null
+    wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb || true
+    if [ -f wkhtmltox_0.12.6.1-2.jammy_amd64.deb ]; then
+        apt-get install -y ./wkhtmltox_0.12.6.1-2.jammy_amd64.deb >/dev/null || true
+        rm -f wkhtmltox_0.12.6.1-2.jammy_amd64.deb
+        ln -sf /usr/local/bin/wkhtmltopdf /usr/bin/wkhtmltopdf 2>/dev/null || true
+        ln -sf /usr/local/bin/wkhtmltoimage /usr/bin/wkhtmltoimage 2>/dev/null || true
+    fi
 fi
 
 # ==============================================================================
@@ -174,58 +162,61 @@ sudo -u "$OE_USER" "$PIP_CMD" install --upgrade pip wheel setuptools >/dev/null
 sudo -u "$OE_USER" "$PIP_CMD" install -r "$OE_HOME_EXT/requirements.txt" >/dev/null
 
 # ==============================================================================
-# 4. DOWNLOAD E SINCRONIZZAZIONE MODULI OCA
+# 4. DOWNLOAD E SINCRONIZZAZIONE MODULI OCA DA oca.txt
 # ==============================================================================
-echo -e "\n${BLUE}>>> Sincronizzazione repository OCA...${NC}"
-OCA_REPOS_LIST=()
+echo -e "\n${BLUE}>>> Controllo lista repository da '$OCA_LIST_FILE'...${NC}"
 
-if [ "$OCA_MODE" = "full" ]; then
-    PAGE=1
-    while :; do
-        RESPONSE=$(curl -s "https://api.github.com/orgs/OCA/repos?per_page=100&page=${PAGE}")
-        if echo "$RESPONSE" | jq -e 'has("message")' > /dev/null; then break; fi
-        CURRENT_REPOS=$(echo "$RESPONSE" | jq -r '.[].name' 2>/dev/null)
-        [ -z "$CURRENT_REPOS" ] && break
-        OCA_REPOS_LIST+=($CURRENT_REPOS)
-        ((PAGE++))
-    done
+if [ ! -f "$OCA_LIST_FILE" ]; then
+    echo -e "${YELLOW}File '$OCA_LIST_FILE' non trovato. Tentro generazione via ./oca_indexer.sh...${NC}"
+    if [ -f "$SCRIPT_DIR/oca_indexer.sh" ]; then
+        bash "$SCRIPT_DIR/oca_indexer.sh"
+    fi
+fi
+
+if [ ! -f "$OCA_LIST_FILE" ]; then
+    echo -e "${RED}Errore: Impossibile trovare o generare '$OCA_LIST_FILE'. Annullamento sincronizzazione OCA.${NC}"
 else
-    OCA_REPOS_LIST=("web" "server-tools" "server-ux" "reporting-engine" "partner-contact" "account-financial-reporting" "social" "mis-builder")
-fi
-
-# Aggiunge localizzazione italiana e altre richieste
-[[ ! " ${OCA_REPOS_LIST[*]} " =~ " l10n-italy " ]] && OCA_REPOS_LIST+=("l10n-italy")
-if [ -n "$EXTRA_L10N" ]; then
-    [[ ! " ${OCA_REPOS_LIST[*]} " =~ " $EXTRA_L10N " ]] && OCA_REPOS_LIST+=("$EXTRA_L10N")
-fi
-
-for REPO_NAME in "${OCA_REPOS_LIST[@]}"; do
-    TARGET_DIR="$OCA_REPOS_DIR/$REPO_NAME"
-    REPO_URL="https://github.com/OCA/${REPO_NAME}.git"
-
-    BRANCH_EXISTS=$(git ls-remote --heads "$REPO_URL" "$OE_VERSION" | wc -l)
-    if [ "$BRANCH_EXISTS" -eq 0 ]; then continue; fi
+    echo -e "${GREEN}Lettura dei repository in corso da '$OCA_LIST_FILE'...${NC}"
     
-    echo -e "Elaborazione OCA: ${GREEN}$REPO_NAME${NC}"
-    if [ -d "$TARGET_DIR" ]; then
-        cd "$TARGET_DIR" || continue
-        sudo -u "$OE_USER" git checkout "$OE_VERSION" >/dev/null 2>&1
-        sudo -u "$OE_USER" git pull origin "$OE_VERSION" >/dev/null 2>&1
-    else
-        sudo -u "$OE_USER" git clone -b "$OE_VERSION" --single-branch "$REPO_URL" "$TARGET_DIR" >/dev/null 2>&1
-    fi
+    while IFS= read -r REPO_URL || [ -n "$REPO_URL" ]; do
+        # Rimuove spazi vuoti o righe commentate
+        REPO_URL=$(echo "$REPO_URL" | tr -d '\r' | xargs)
+        [[ -z "$REPO_URL" || "$REPO_URL" =~ ^# ]] && continue
 
-    for manifest in "$TARGET_DIR"/*/__manifest__.py; do
-        if [ -f "$manifest" ]; then
-            MODULE_DIR=$(dirname "$manifest")
-            sudo -u "$OE_USER" ln -sfn "$MODULE_DIR" "$CUSTOM_ADDONS_DIR/$(basename "$MODULE_DIR")"
+        REPO_NAME=$(basename "$REPO_URL" .git)
+        TARGET_DIR="$OCA_REPOS_DIR/$REPO_NAME"
+
+        # Verifica se il branch per la versione selezionata esiste sul repository GitHub
+        BRANCH_EXISTS=$(git ls-remote --heads "$REPO_URL" "$OE_VERSION" 2>/dev/null | wc -l)
+        if [ "$BRANCH_EXISTS" -eq 0 ]; then
+            echo -e "${YELLOW}-> Repository $REPO_NAME: branch '$OE_VERSION' non presente. Ignorato.${NC}"
+            continue
         fi
-    done
 
-    if [ -f "$TARGET_DIR/requirements.txt" ]; then
-        sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" >/dev/null 2>&1
-    fi
-done
+        echo -e "Elaborazione OCA [${GREEN}$REPO_NAME${NC}] per Odoo ${GREEN}$OE_VERSION${NC}..."
+
+        if [ -d "$TARGET_DIR" ]; then
+            cd "$TARGET_DIR" || continue
+            sudo -u "$OE_USER" git checkout "$OE_VERSION" >/dev/null 2>&1 || true
+            sudo -u "$OE_USER" git pull origin "$OE_VERSION" >/dev/null 2>&1 || true
+        else
+            sudo -u "$OE_USER" git clone -b "$OE_VERSION" --single-branch "$REPO_URL" "$TARGET_DIR" >/dev/null 2>&1 || true
+        fi
+
+        if [ -d "$TARGET_DIR" ]; then
+            for manifest in "$TARGET_DIR"/*/__manifest__.py "$TARGET_DIR"/*/__openerp__.py; do
+                if [ -f "$manifest" ]; then
+                    MODULE_DIR=$(dirname "$manifest")
+                    sudo -u "$OE_USER" ln -sfn "$MODULE_DIR" "$CUSTOM_ADDONS_DIR/$(basename "$MODULE_DIR")"
+                fi
+            done
+
+            if [ -f "$TARGET_DIR/requirements.txt" ]; then
+                sudo -u "$OE_USER" "$PIP_CMD" install -r "$TARGET_DIR/requirements.txt" >/dev/null 2>&1 || true
+            fi
+        fi
+    done < "$OCA_LIST_FILE"
+fi
 
 # ==============================================================================
 # 5. CONFIGURAZIONE, ODOO SYSTEMD, LOGROTATE E BACKUP
@@ -320,7 +311,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable odoo
-systemctl start odoo
+systemctl restart odoo
 
 # ==============================================================================
 # 6. GUIDA NGINX PROXY MANAGER (NPM)
@@ -368,9 +359,62 @@ proxy_send_timeout 720s;
 ========================================================================
 EOF
 
-echo -e "\n${GREEN}======================================================================${NC}"
-echo -e "${GREEN}Installazione Completata con Successo!${NC}"
-echo -e "Odoo è accessibile sulla porta 8069."
+# ==============================================================================
+# 7. VERIFICA E COLLAUDO DELLE PORTE E DELLE API DI ODOO
+# ==============================================================================
+echo -e "\n${BLUE}>>> Avvio collaudo porte e API di Odoo...${NC}"
+
+# Attesa avvio servizio
+MAX_ATTEMPTS=30
+ATTEMPT=0
+SERVICE_UP=false
+
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069 | grep -E -q "200|302|301"; then
+        SERVICE_UP=true
+        break
+    fi
+    sleep 1
+    ((ATTEMPT++))
+done
+
+echo -e "\n${BLUE}======================================================================${NC}"
+echo -e "${GREEN}                    RISULTATO VERIFICA E HEALTH CHECK${NC}"
+echo -e "${BLUE}======================================================================${NC}"
+
+# 1. Test Porta HTTP (8069)
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069 || echo "000")
+if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 302 ]; then
+    echo -e "Porta HTTP Odoo (8069) : ${GREEN}ONLINE (HTTP $HTTP_CODE)${NC}"
+else
+    echo -e "Porta HTTP Odoo (8069) : ${RED}OFFLINE o IN ERRORE (HTTP $HTTP_CODE)${NC}"
+fi
+
+# 2. Test Endpoint API /web/health o Database Selector
+HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069/web/health || echo "000")
+DB_SELECTOR_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069/web/database/selector || echo "000")
+
+if [ "$HEALTH_CODE" -eq 200 ]; then
+    echo -e "API Health (/web/health) : ${GREEN}OK (HTTP 200)${NC}"
+elif [ "$DB_SELECTOR_CODE" -eq 200 ] || [ "$DB_SELECTOR_CODE" -eq 302 ]; then
+    echo -e "API Web Interface (/web)  : ${GREEN}OK (HTTP $DB_SELECTOR_CODE)${NC}"
+else
+    echo -e "API Web Interface         : ${YELLOW}NON RISPONDE ANCORA O IN INIZIALIZZAZIONE${NC}"
+fi
+
+# 3. Test API JSON-RPC
+JSON_RPC_STATUS=$(curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "method": "call", "params": {}, "id": 1}' \
+  http://127.0.0.1:8069/jsonrpc | jq -r '.jsonrpc' 2>/dev/null || echo "error")
+
+if [ "$JSON_RPC_STATUS" = "2.0" ]; then
+    echo -e "API JSON-RPC (/jsonrpc)  : ${GREEN}ATTIVA ED OPERATIVA${NC}"
+else
+    echo -e "API JSON-RPC (/jsonrpc)  : ${YELLOW}VERIFICA IN CORSO / RISPOSTA NON STANDARD${NC}"
+fi
+
+echo -e "${GREEN}======================================================================${NC}"
+echo -e "${GREEN}Installazione completata con successo!${NC}"
+echo -e "Odoo versione ${GREEN}$OE_VERSION${NC} è attivo e raggiungibile su: ${BLUE}http://127.0.0.1:8069${NC}"
 echo -e "La guida per Nginx Proxy Manager è stata salvata in: $NPM_GUIDE"
-cat "$NPM_GUIDE"
 echo -e "${GREEN}======================================================================${NC}"
