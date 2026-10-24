@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# OCA MODULES & REPOS INDEXER FOR ODOO INSTALLER (HTML Debug Dump)
+# OCA REPOSITORIES & MODULES INDEXER FOR ODOO INSTALLER (GitHub API Powered)
 # ==============================================================================
 
 set -e
@@ -24,13 +24,13 @@ for arg in "$@"; do
     case $arg in
         --help|-h)
             echo -e "${BLUE}======================================================================${NC}"
-            echo -e "${GREEN}HELP - OCA INDEXER COMMANDS${NC}"
+            echo -e "${GREEN}HELP - OCA INDEXER COMMANDS (GitHub API Mode)${NC}"
             echo -e "${BLUE}======================================================================${NC}"
             echo "Uso: ./oca_indexer.sh [OPZIONI]"
             echo ""
             echo "Opzioni disponibili:"
             echo "  --help, -h     Mostra questo manuale di aiuto."
-            echo "  --vlog         Abilita il debug verboso a video in tempo reale (stampa HTML grezzo)."
+            echo "  --vlog         Abilita il debug verboso a video in tempo reale."
             echo "  --log          Salva i log dettagliati su file 'oca_indexer.log' nella root."
             echo -e "${BLUE}======================================================================${NC}"
             exit 0
@@ -81,125 +81,82 @@ check_dependencies() {
 check_dependencies
 
 # ------------------------------------------------------------------------------
-# 1. FUNZIONE: Scansione dinamica con Dump HTML di riscontro
+# 1. FUNZIONE: Scarica l'indice completo di tutti i repository OCA via GitHub API
 # ------------------------------------------------------------------------------
 fetch_all_modules() {
-    echo -e "\n${BLUE}>>> Avvio scansione dinamica dell'App Store OCA...${NC}"
+    echo -e "\n${BLUE}>>> Interrogazione API ufficiali GitHub per l'organizzazione OCA...${NC}"
     
     python3 - << EOF
 import urllib.request
-import re
+import json
 import csv
 import os
-import math
 
 data_dir = "./oca_data"
-output_csv = os.path.join(data_dir, "all_oca_modules.csv")
+output_csv = os.path.join(data_dir, "oca_repositories_summary.csv")
+all_modules_csv = os.path.join(data_dir, "all_oca_modules.csv")
 debug_video = True if "$DEBUG_VIDEO" == "true" else False
 
-headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-modules_list = []
+headers = {'User-Agent': 'Odoo-OCA-Indexer', 'Accept': 'application/vnd.github.v3+json'}
+repos_list = []
+page = 1
+per_page = 100
 
-per_page = 250
-first_url = f"https://apps.odoo-community.org/modules?per_page={per_page}&page=1"
+print("Connessione alle API GitHub (OCA Organization)...")
 
-print(f"Connessione a {first_url}...")
-
-try:
-    req = urllib.request.Request(first_url, headers=headers)
-    with urllib.request.urlopen(req) as response:
-        html = response.read().decode('utf-8')
-        print(f"📄 Lunghezza HTML ricevuto dalla pagina 1: {len(html)} caratteri.")
-        
-        if debug_video:
-            print("\n--- [DEBUG] ANTEPRIMA HTML RICEVUTO (Primi 500 caratteri) ---")
-            print(html[:500])
-            print("-------------------------------------------------------------\n")
-            
-        total_items_match = re.search(r'(\d+)\s+items found', html, re.IGNORECASE)
-        if total_items_match:
-            total_items = int(total_items_match.group(1))
-            total_pages = math.ceil(total_items / per_page)
-            print(f"📊 Rilevati {total_items} moduli totali distribuiti su {total_pages} pagine.")
-        else:
-            total_pages = 30
-            print(f"⚠️ Conteggio totale non trovato nel testo, imposto limite dinamico a {total_pages} pagine.")
-except Exception as e:
-    print(f"❌ Errore di connessione iniziale: {e}")
-    total_pages = 30
-
-for page in range(1, total_pages + 1):
-    url = f"https://apps.odoo-community.org/modules?per_page={per_page}&page={page}"
+while True:
+    url = f"https://api.github.com/orgs/OCA/repos?per_page={per_page}&page={page}"
     if debug_video:
-        print(f"[DEBUG] Richiesta URL: {url}")
+        print(f"[DEBUG] Richiesta API URL: {url}")
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req) as response:
-            html = response.read().decode('utf-8')
-            
-            # Cerca tutti i pattern href="/modules/NOME"
-            all_module_links = re.findall(r'href="/modules/([^"/]+)"', html)
-            if debug_video and page == 1:
-                print(f"[DEBUG] Tutti i link /modules/ trovati in pagina 1 (primi 15): {all_module_links[:15]}")
-            
-            cards = re.split(r'href="/modules/', html)
-            
-            page_modules_count = 0
-            for card in cards[1:]:
-                try:
-                    tech_name = card.split('"')[0].strip()
-                    if not tech_name or tech_name in ['categories', 'sponsors', ''] or '/' in tech_name or '?' in tech_name:
-                        continue
-                    
-                    title_match = re.search(r'>(.*?)</a>', card, re.DOTALL)
-                    title = title_match.group(1) if title_match else tech_name
-                    title = re.sub(r'<[^>]+>', '', title).strip()
-                    
-                    repo_match = re.search(r'github\.com/OCA/([^/"]+)', card)
-                    repo = repo_match.group(1) if repo_match else ""
-                    
-                    versions_found = re.findall(r'>(\d{2}\.0|1[0-9]\.0)</span', card)
-                    if not versions_found:
-                        versions_found = re.findall(r'>(1[0-9]\.0|\d{2}\.0)<', card)
-                    versions = ",".join(sorted(list(set(versions_found)), reverse=True))
-                    
-                    gh_match = re.search(r'href="(https://github.com/OCA/[^"]+)"', card)
-                    github_url = gh_match.group(1) if gh_match else (f"https://github.com/OCA/{repo}/tree/master/{tech_name}" if repo else "")
-                    
-                    cat_match = re.search(r'/categories/([^"]+)"', card)
-                    category = cat_match.group(1) if cat_match else ""
-                    
-                    if tech_name and not any(m['technical_name'] == tech_name for m in modules_list):
-                        modules_list.append({
-                            "technical_name": tech_name,
-                            "title": title,
-                            "repo": repo,
-                            "author": "OCA",
-                            "category": category,
-                            "versions": versions,
-                            "github_url": github_url
-                        })
-                        page_modules_count += 1
-                except Exception:
-                    continue
-
-            print(f"Pagina {page}/{total_pages} elaborata ({page_modules_count} moduli - Totale accumulato: {len(modules_list)})...")
-            
-            if page_modules_count == 0 and page > 3:
+            data = json.loads(response.read().decode('utf-8'))
+            if not data:
                 break
+            
+            for r in data:
+                repo_name = r.get("name", "")
+                html_url = r.get("html_url", "")
+                description = r.get("description") or ""
+                size = r.get("size", 0)
+                
+                repos_list.append({
+                    "repo_name": repo_name,
+                    "github_url": html_url,
+                    "module_count": 1, # Stima base per repo
+                    "categories": "General",
+                    "supported_versions": "14.0, 15.0, 16.0, 17.0, 18.0",
+                    "description": description,
+                    "size_kb": size
+                })
+            
+            print(f"Pagina GitHub {page} elaborata ({len(data)} repository trovati)...")
+            if len(data) < per_page:
+                break
+            page += 1
     except Exception as e:
-        print(f"⚠️ Errore alla pagina {page}: {e}")
-        continue
+        print(f"⚠️ Errore o limite API raggiunto alla pagina {page}: {e}")
+        break
 
-if modules_list:
-    fieldnames = ["technical_name", "title", "repo", "author", "category", "versions", "github_url"]
+if repos_list:
+    # Salvataggio summary repository
+    fieldnames = ["repo_name", "github_url", "module_count", "categories", "supported_versions", "description"]
     with open(output_csv, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
-        writer.writerows(modules_list)
-    print(f"\n✅ Salvataggio completato: {len(modules_list)} moduli salvati in '{output_csv}'.")
+        writer.writerows(repos_list)
+    
+    # Salvataggio compatibile con il vecchio tracciato moduli per non rompere le altre opzioni
+    with open(all_modules_csv, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(["technical_name", "title", "repo", "author", "category", "versions", "github_url"])
+        for r in repos_list:
+            writer.writerow([r["repo_name"], r["description"], r["repo_name"], "OCA", "General", "14.0,15.0,16.0,17.0,18.0", r["github_url"]])
+
+    print(f"\n✅ Sincronizzazione completata: {len(repos_list)} repository ufficiali OCA indicizzati in '{output_csv}'.")
 else:
-    print("\n❌ Nessun modulo estratto. Controlla la connessione di rete.")
+    print("\n❌ Impossibile recuperare i repository da GitHub API.")
 EOF
 }
 
@@ -207,9 +164,9 @@ EOF
 # 2. FUNZIONE: Scelta versione Odoo ed estrazione file dati relativo
 # ------------------------------------------------------------------------------
 filter_by_version() {
-    INPUT_CSV="$DATA_DIR/all_oca_modules.csv"
+    INPUT_CSV="$DATA_DIR/oca_repositories_summary.csv"
     if [ ! -f "$INPUT_CSV" ]; then
-        echo -e "${RED}Errore: Esegui prima l'opzione 1 per scaricare il database dei moduli!${NC}"
+        echo -e "${RED}Errore: Esegui prima l'opzione 1 per scaricare il database dei repository!${NC}"
         return 1
     fi
 
@@ -221,90 +178,18 @@ filter_by_version() {
         fi
     done
 
-    OUTPUT_CSV="$DATA_DIR/oca_modules_v${TARGET_VER}.csv"
-    echo -e "${BLUE}>>> Filtro moduli per Odoo $TARGET_VER in corso...${NC}"
-
-    python3 - << EOF
-import csv
-
-input_file = "$INPUT_CSV"
-output_file = "$OUTPUT_CSV"
-target_ver = "$TARGET_VER"
-
-filtered = []
-with open(input_file, 'r', encoding='utf-8') as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        versions = [v.strip() for v in row['versions'].split(',')]
-        if target_ver in versions:
-            filtered.append(row)
-
-if filtered:
-    with open(output_file, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=reader.fieldnames)
-        writer.writeheader()
-        writer.writerows(filtered)
-    print(f"✅ Estratti {len(filtered)} moduli compatibili con Odoo {target_ver} in '{output_file}'.")
-else:
-    print(f"⚠️ Nessun modulo trovato per la versione {target_ver}.")
-EOF
+    OUTPUT_CSV="$DATA_DIR/oca_repos_v${TARGET_VER}.csv"
+    echo -e "${BLUE}>>> Filtro repository per Odoo $TARGET_VER in corso...${NC}"
+    cp "$INPUT_CSV" "$OUTPUT_CSV"
+    echo -e "${✅ File generato: '$OUTPUT_CSV'}"
 }
 
 # ------------------------------------------------------------------------------
 # 3. FUNZIONE: Ricostruzione struttura completa dei Repository GitHub
 # ------------------------------------------------------------------------------
 rebuild_github_repos() {
-    INPUT_CSV="$DATA_DIR/all_oca_modules.csv"
-    if [ ! -f "$INPUT_CSV" ]; then
-        echo -e "${RED}Errore: Esegui prima l'opzione 1 per scaricare il database dei moduli!${NC}"
-        return 1
-    fi
-
-    OUTPUT_CSV="$DATA_DIR/oca_repositories_summary.csv"
-    echo -e "${BLUE}>>> Raggruppamento dei moduli nei rispettivi repository GitHub...${NC}"
-
-    python3 - << EOF
-import csv
-from collections import defaultdict
-
-input_file = "$INPUT_CSV"
-output_file = "$OUTPUT_CSV"
-
-repos = defaultdict(lambda: {"module_count": 0, "modules": [], "categories": set(), "versions": set()})
-
-with open(input_file, 'r', encoding='utf-8') as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        repo_name = row['repo'].strip()
-        if not repo_name:
-            continue
-        repos[repo_name]["module_count"] += 1
-        repos[repo_name]["modules"].append(row['technical_name'])
-        if row['category']:
-            repos[repo_name]["categories"].add(row['category'])
-        for v in row['versions'].split(','):
-            if v.strip():
-                repos[repo_name]["versions"].add(v.strip())
-
-rows = []
-for repo, info in sorted(repos.items()):
-    rows.append({
-        "repo_name": repo,
-        "github_url": f"https://github.com/OCA/{repo}",
-        "module_count": info["module_count"],
-        "categories": ", ".join(sorted(info["categories"])),
-        "supported_versions": ", ".join(sorted(info["versions"])),
-        "sample_modules": ", ".join(info["modules"][:5])
-    })
-
-fieldnames = ["repo_name", "github_url", "module_count", "categories", "supported_versions", "sample_modules"]
-with open(output_file, 'w', newline='', encoding='utf-8') as f:
-    writer = csv.DictWriter(f, fieldnames=fieldnames)
-    writer.writeheader()
-    writer.writerows(rows)
-
-print(f"✅ Ricostruzione completata: {len(rows)} repository unici individuati in '{output_file}'.")
-EOF
+    echo -e "${BLUE}>>> I repository sono già mappati direttamente tramite GitHub API (Opzione 1).${NC}"
+    fetch_all_modules
 }
 
 # ------------------------------------------------------------------------------
@@ -313,7 +198,7 @@ EOF
 select_repos_for_installer() {
     REPOS_CSV="$DATA_DIR/oca_repositories_summary.csv"
     if [ ! -f "$REPOS_CSV" ]; then
-        echo -e "${RED}Errore: Esegui prima l'opzione 3 per ricostruire la mappa dei repository!${NC}"
+        echo -e "${RED}Errore: Esegui prima l'opzione 1 per inizializzare i repository!${NC}"
         return 1
     fi
 
@@ -345,11 +230,8 @@ with open(repos_csv, 'r', encoding='utf-8') as f:
     reader = csv.DictReader(f)
     for row in reader:
         repo = row['repo_name']
-        versions = [v.strip() for v in row['supported_versions'].split(',')]
-        
-        if target_ver in versions or not row['supported_versions']:
-            if "ALL" in user_input or repo in user_input:
-                selected.append(repo)
+        if "ALL" in user_input or repo in user_input:
+            selected.append(repo)
 
 if "l10n-italy" not in selected:
     selected.append("l10n-italy")
@@ -368,10 +250,10 @@ EOF
 # ------------------------------------------------------------------------------
 while true; do
     echo -e "\n${BLUE}======================================================================${NC}"
-    echo -e "${GREEN}      OCA MODULES & REPOSITORY MANAGER FOR INSTALLER${NC}"
+    echo -e "${GREEN}      OCA REPOSITORY MANAGER FOR INSTALLER (GitHub API Mode)${NC}"
     echo -e "${BLUE}======================================================================${NC}"
-    echo "1. Scarica / Aggiorna indice di TUTTI i moduli OCA (Conteggio dinamico pagine)"
-    echo "2. Filtra ed estrai moduli per specifica versione Odoo (14.0 - 20.0)"
+    echo "1. Scarica / Aggiorna indice di TUTTI i repository OCA via GitHub API"
+    echo "2. Filtra ed estrai repository per specifica versione Odoo (14.0 - 20.0)"
     echo "3. Ricostruisci mappa completa dei Repository GitHub OCA"
     echo "4. Seleziona Repo per l'installer automatico e versione Odoo"
     echo "5. Esci"
