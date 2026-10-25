@@ -1,8 +1,4 @@
 #!/bin/bash
-# ==============================================================================
-# ODOO & POSTGRESQL REAL-WORLD OPTIMIZER & BENCHMARK DASHBOARD
-# Misurazione dinamica Prima/Dopo con Stress Test multi-livello
-# ==============================================================================
 
 set -e
 
