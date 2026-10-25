@@ -178,53 +178,49 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
             sudo -u "$OE_USER" "$PIP_CMD" install -r requirements.txt >/dev/null 2>&1 || true
         fi
 
-        echo -e "\n${BLUE}>>> [5/6] Avvio Odoo in modalità aggiornamento globale (-u all)...${NC}"
-        touch /var/log/odoo/odoo.log
-        chown "$OE_USER:$OE_USER" /var/log/odoo/odoo.log
-        
-        # Disattiva temporaneamente il trace per il loop di attesa pulito
-        [ "$DEBUG_MODE" = true ] && set +x
+        # ==============================================================================
+# 5/6. AGGIORNAMENTO TRAMITE DEMONE SYSTEMD (-u all) & MONITORAGGIO LOG
+# ==============================================================================
+echo -e "\n${BLUE}>>> [5/6] Configurazione ed esecuzione aggiornamento tramite systemd (con -u all)...${NC}"
+touch /var/log/odoo/odoo.log
+chown "$OE_USER:$OE_USER" /var/log/odoo/odoo.log
 
-        sudo -u "$OE_USER" "$PYTHON_CMD" "$OE_HOME_EXT/odoo-bin" -c "$OE_CONFIG" -u all &
-        ODOO_PID=$!
+# Modifica temporanea del file systemd per includere l'opzione -u all
+SERVICE_FILE="/etc/systemd/system/odoo.service"
+if grep -q " -u all" "$SERVICE_FILE"; then
+    # Già presente
+    true
+else
+    # Inserisce -u all alla fine della riga ExecStart
+    sed -i "s|ExecStart=\(.*\)|ExecStart=\1 -u all|" "$SERVICE_FILE"
+fi
 
-        echo -e "${YELLOW}Attendibilità avvio Odoo (controllo porta 8069 in corso)...${NC}"
-        ATTEMPT=0
-        MAX_ATTEMPTS=45
-        STARTED=false
+systemctl daemon-reload
+systemctl restart odoo
 
-        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-            if curl -s http://127.0.0.1:8069 >/dev/null 2>&1; then
-                STARTED=true
-                break
-            fi
-            sleep 3
-            ((ATTEMPT++))
-        done
+echo -e "\n${GREEN}✔ Servizio Odoo avviato in modalità update (-u all) tramite demone systemd.${NC}"
+echo -e "${YELLOW}======================================================================${NC}"
+echo -e "${YELLOW}  MONITORAGGIO LOG IN TEMPO REALE (Premi [Ctrl+C] per uscire dal log)  ${NC}"
+echo -e "${YELLOW}======================================================================${NC}"
 
-        [ "$DEBUG_MODE" = true ] && set -x
+# Mostra il tail in tempo reale del log (l'utente vede l'avanzamento)
+tail -f /var/log/odoo/odoo.log || true
 
-        kill $ODOO_PID 2>/dev/null || true
-        wait $ODOO_PID 2>/dev/null || true
+# ==============================================================================
+# 6/6. RIPRISTINO MODALITÀ PRODUZIONE (Rimuovendo -u all)
+# ==============================================================================
+echo -e "\n${BLUE}>>> [6/6] Fine aggiornamento: Ripristino modalità di produzione...${NC}"
+read -p "Premi [INVIO] per rimuovere l'opzione -u all dal demone e riavviare Odoo in produzione..."
 
-        echo -e "\n${GREEN}✔ Aggiornamento Odoo completato con successo.${NC}"
-        read -p "Premi [INVIO] per passare alle opzioni finali di riavvio..."
+# Rimuove -u all dalla riga ExecStart del file systemd
+sed -i "s| -u all||" "$SERVICE_FILE"
 
-        echo -e "\n${YELLOW}>>> [6/6] Operazione completata.${NC}"
-        echo "Cosa desideri fare adesso?"
-        echo "1) Riavviare il server (Reboot)"
-        echo "2) Riavviare solo il servizio Odoo"
-        read -p "Inserisci la tua scelta (1 o 2): " FINAL_CHOICE
+systemctl daemon-reload
+systemctl restart odoo
 
-        if [ "$FINAL_CHOICE" = "1" ]; then
-            echo -e "${BLUE}Riavvio del server in corso...${NC}"
-            reboot
-        else
-            echo -e "${BLUE}Riavvio del servizio Odoo...${NC}"
-            systemctl restart odoo
-            echo -e "${GREEN}Servizio Odoo riavviato e operativo!${NC}"
-        fi
-        exit 0
+echo -e "${GREEN}======================================================================${NC}"
+echo -e "${GREEN}✔ Servizio Odoo ripristinato e riavviato in modalità PRODUZIONE!${NC}"
+echo -e "${GREEN}======================================================================${NC}"
     fi
 fi
 
