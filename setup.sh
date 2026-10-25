@@ -15,14 +15,14 @@ for arg in "$@"; do
         --debug)
             DEBUG_MODE=true
             set -x
-            echo "🔧 [DEBUG MODE ATTIVO] Tracciamento dei comandi abilitato."
+            echo "[DEBUG MODE ATTIVO] Tracciamento dei comandi abilitato."
             shift
             ;;
         --help|-h)
             echo "======================================================================"
             echo "MANUALE D'USO - INSTALLER ODOO & OCA"
             echo "======================================================================"
-            echo "Uso: sudo ./install_odoo_oca.sh [OPZIONI]"
+            echo "Uso: sudo ./setup.sh [OPZIONI]"
             echo ""
             echo "Opzioni disponibili:"
             echo "  --debug    Attiva il tracciamento dettagliato dei comandi (set -x)."
