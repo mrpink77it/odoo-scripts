@@ -434,7 +434,7 @@ chown "$OE_USER:$OE_USER" /var/log/odoo
 
 cat <<EOF > "$OE_CONFIG"
 [options]
-admin_passwd = admin_password_cambiami
+admin_passwd = admin
 db_host = False
 db_port = False
 db_user = $OE_USER
