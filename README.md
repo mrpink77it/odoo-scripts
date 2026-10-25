@@ -4,11 +4,11 @@
 ![Odoo](https://img.shields.io/badge/Odoo-8.0%20to%2020.0-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Script di automazione Bash per l'installazione, l'aggiornamento e l'ottimizzazione di Odoo ERP e dei moduli OCA su ambienti bare-metal (Ubuntu/Debian).
+Script per l'installazione, l'aggiornamento e l'ottimizzazione di Odoo.
 
 ---
 
-## 🌐 Informazioni su Odoo e l'Ecosistema
+## Informazioni su Odoo e l'Ecosistema
 
 **Odoo** è una delle suite di software gestionale (ERP/CRM) open-source più diffuse al mondo, basata su un'architettura modulare in Python e PostgreSQL. Consente di gestire qualsiasi processo aziendale (contabilità, vendite, magazzino, produzione, e-commerce) attraverso moduli integrati.
 
