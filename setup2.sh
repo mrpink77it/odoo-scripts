@@ -122,6 +122,13 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
         echo -e "\n${BLUE}>>> [2/6] Arresto del servizio Odoo esistente...${NC}"
         systemctl stop odoo || true
 
+        # Termina eventuali processi odoo-bin rimasti attivi in background
+        pkill -f "odoo-bin" || true
+        
+        # Libera forzatamente la porta 8069 se occupata da residui
+        fuser -k 8069/tcp 2>/dev/null || true
+        sleep 2
+        
         if [ -d "$OE_HOME_EXT/.git" ]; then
             OE_VERSION=$(git -C "$OE_HOME_EXT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "18.0")
         else
