@@ -14,7 +14,7 @@ Script per l'installazione, l'aggiornamento e l'ottimizzazione di Odoo Community
 **Odoo** è una delle suite di software gestionale (ERP/CRM) open-source più diffuse al mondo, basata su un'architettura modulare in Python e PostgreSQL. Consente di gestire qualsiasi processo aziendale (contabilità, vendite, magazzino, produzione, e-commerce) attraverso moduli integrati.
 
 ### Le Associazioni di Riferimento
-* **[OCA (Odoo Community Association)](https://odoo-community.org/):** Organizzazione internazionale senza scopo di lucro che promuove ilர்களில் sviluppo collaborativo delle funzionalità di Odoo e supporta la crescita della community globale attraverso la manutenzione di migliaia di repository di moduli testati e indipendenti dal vendor.
+* **[OCA (Odoo Community Association)](https://odoo-community.org/):** Organizzazione internazionale senza scopo di lucro che promuove lo sviluppo collaborativo delle funzionalità di Odoo e supporta la crescita della community globale attraverso la manutenzione di migliaia di repository di moduli testati e indipendenti dal vendor.
 * **[Odoo Italia (odoo-italia.org)](https://www.odoo-italia.org/):** L'associazione di riferimento per il mercato italiano. Svolge un lavoro fondamentale di aggregazione della community nazionale, promozione delle normative fiscali italiane (come la fatturazione elettronica e i registri IVA), coordinamento della localizzazione e divulgazione delle best practices per l'adozione di Odoo nelle aziende italiane.
 
 ---
