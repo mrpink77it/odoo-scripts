@@ -1,10 +1,38 @@
 #!/bin/bash
 # ==============================================================================
 # INSTALLER ODOO + ALL-IN-ONE OCA INDEXER & SYNC (Bare-Metal Ubuntu/Debian)
-# Con Pause Interattive per Collaudo, Update & Health Check
+# Con supporto per --debug, --help, correzione Locales e Health Check pulito
 # ==============================================================================
 
 set -e
+
+# ==============================================================================
+# GESTIONE ARGOMENTI CLI (--debug, --help)
+# ==============================================================================
+DEBUG_MODE=false
+
+for arg in "$@"; do
+    case $arg in
+        --debug)
+            DEBUG_MODE=true
+            set -x
+            echo "🔧 [DEBUG MODE ATTIVO] Tracciamento dei comandi abilitato."
+            shift
+            ;;
+        --help|-h)
+            echo "======================================================================"
+            echo "MANUALE D'USO - INSTALLER ODOO & OCA"
+            echo "======================================================================"
+            echo "Uso: sudo ./install_odoo_oca.sh [OPZIONI]"
+            echo ""
+            echo "Opzioni disponibili:"
+            echo "  --debug    Attiva il tracciamento dettagliato dei comandi (set -x)."
+            echo "  --help     Mostra questo manuale di aiuto."
+            echo "======================================================================"
+            exit 0
+            ;;
+    esac
+done
 
 # ==============================================================================
 # VARIABILI DI CONFIGURAZIONE GLOBALE
@@ -30,7 +58,6 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Controllo privilegi di root
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Errore: Questo script deve essere eseguito come root (sudo).${NC}"
     exit 1
@@ -95,6 +122,13 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
         echo -e "\n${BLUE}>>> [2/6] Arresto del servizio Odoo esistente...${NC}"
         systemctl stop odoo || true
 
+        # Termina eventuali processi odoo-bin rimasti attivi in background
+        pkill -f "odoo-bin" || true
+        
+        # Libera forzatamente la porta 8069 se occupata da residui
+        fuser -k 8069/tcp 2>/dev/null || true
+        sleep 2
+        
         if [ -d "$OE_HOME_EXT/.git" ]; then
             OE_VERSION=$(git -C "$OE_HOME_EXT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "18.0")
         else
@@ -151,46 +185,49 @@ if ss -tlnp 2>/dev/null | grep -q ":8069" || netstat -tuln 2>/dev/null | grep -q
             sudo -u "$OE_USER" "$PIP_CMD" install -r requirements.txt >/dev/null 2>&1 || true
         fi
 
-        echo -e "\n${BLUE}>>> [5/6] Avvio Odoo in modalità aggiornamento globale (-u all) con tail del log...${NC}"
-        touch /var/log/odoo/odoo.log
-        chown "$OE_USER:$OE_USER" /var/log/odoo/odoo.log
-        
-        sudo -u "$OE_USER" "$PYTHON_CMD" "$OE_HOME_EXT/odoo-bin" -c "$OE_CONFIG" -u all &
-        ODOO_PID=$!
+        # ==============================================================================
+# 5/6. AGGIORNAMENTO TRAMITE DEMONE SYSTEMD (-u all) & MONITORAGGIO LOG
+# ==============================================================================
+echo -e "\n${BLUE}>>> [5/6] Configurazione ed esecuzione aggiornamento tramite systemd (con -u all)...${NC}"
+touch /var/log/odoo/odoo.log
+chown "$OE_USER:$OE_USER" /var/log/odoo/odoo.log
 
-        tail -f /var/log/odoo/odoo.log &
-        TAIL_PID=$!
+# Modifica temporanea del file systemd per includere l'opzione -u all
+SERVICE_FILE="/etc/systemd/system/odoo.service"
+if grep -q " -u all" "$SERVICE_FILE"; then
+    # Già presente
+    true
+else
+    # Inserisce -u all alla fine della riga ExecStart
+    sed -i "s|ExecStart=\(.*\)|ExecStart=\1 -u all|" "$SERVICE_FILE"
+fi
 
-        while kill -0 $ODOO_PID 2>/dev/null; do
-            if grep -q "HTTP service running" /var/log/odoo/odoo.log 2>/dev/null || grep -q "Modules loaded" /var/log/odoo/odoo.log 2>/dev/null; then
-                sleep 5
-                break
-            fi
-            sleep 2
-        done
+systemctl daemon-reload
+systemctl restart odoo
 
-        kill $TAIL_PID 2>/dev/null || true
-        kill $ODOO_PID 2>/dev/null || true
-        wait $ODOO_PID 2>/dev/null || true
+echo -e "\n${GREEN}✔ Servizio Odoo avviato in modalità update (-u all) tramite demone systemd.${NC}"
+echo -e "${YELLOW}======================================================================${NC}"
+echo -e "${YELLOW}  MONITORAGGIO LOG IN TEMPO REALE (Premi [Ctrl+C] per uscire dal log)  ${NC}"
+echo -e "${YELLOW}======================================================================${NC}"
 
-        echo -e "\n${GREEN}✔ Aggiornamento Odoo completato con successo.${NC}"
-        read -p "Premi [INVIO] per passare alle opzioni finali di riavvio..."
+# Mostra il tail in tempo reale del log (l'utente vede l'avanzamento)
+tail -f /var/log/odoo/odoo.log || true
 
-        echo -e "\n${YELLOW}>>> [6/6] Operazione completata.${NC}"
-        echo "Cosa desideri fare adesso?"
-        echo "1) Riavviare il server (Reboot)"
-        echo "2) Riavviare solo il servizio Odoo"
-        read -p "Inserisci la tua scelta (1 o 2): " FINAL_CHOICE
+# ==============================================================================
+# 6/6. RIPRISTINO MODALITÀ PRODUZIONE (Rimuovendo -u all)
+# ==============================================================================
+echo -e "\n${BLUE}>>> [6/6] Fine aggiornamento: Ripristino modalità di produzione...${NC}"
+read -p "Premi [INVIO] per rimuovere l'opzione -u all dal demone e riavviare Odoo in produzione..."
 
-        if [ "$FINAL_CHOICE" = "1" ]; then
-            echo -e "${BLUE}Riavvio del server in corso...${NC}"
-            reboot
-        else
-            echo -e "${BLUE}Riavvio del servizio Odoo...${NC}"
-            systemctl restart odoo
-            echo -e "${GREEN}Servizio Odoo riavviato e operativo!${NC}"
-        fi
-        exit 0
+# Rimuove -u all dalla riga ExecStart del file systemd
+sed -i "s| -u all||" "$SERVICE_FILE"
+
+systemctl daemon-reload
+systemctl restart odoo
+
+echo -e "${GREEN}======================================================================${NC}"
+echo -e "${GREEN}✔ Servizio Odoo ripristinato e riavviato in modalità PRODUZIONE!${NC}"
+echo -e "${GREEN}======================================================================${NC}"
     fi
 fi
 
@@ -205,7 +242,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y sudo curl wget locales tzdata keyboard-configuration python3 python3-pip jq
 
-echo -e "\n${YELLOW}>>> Generazione dei Locales di sistema (UTF-8)...${NC}"
+echo -e "\n${YELLOW}>>> Generazione corretta dei Locales di sistema (UTF-8)...${NC}"
 sed -i '/en_US.UTF-8 UTF-8/s/^# //' /etc/locale.gen
 locale-gen en_US.UTF-8 it_IT.UTF-8 >/dev/null 2>&1 || true
 update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 LANGUAGE=en_US.UTF-8
@@ -297,7 +334,7 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" --no-install-recommends "${MISSING_PACKAGES[@]}"
 fi
 
-if ! command -v rtlcss > /dev/null; then npm install -g rtlcss >/dev/null 2>&1; fi
+if ! command -v rtlcss > /dev/null; then npm install -g rtlcss >/dev/null 2>&1 || true; fi
 if ! command -v wkhtmltopdf > /dev/null; then
     wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb || true
     if [ -f wkhtmltox_0.12.6.1-2.jammy_amd64.deb ]; then
@@ -558,7 +595,7 @@ else
     echo -e "Porta HTTP Odoo (8069) : ${RED}OFFLINE o IN ERRORE (HTTP $HTTP_CODE)${NC}"
 fi
 
-HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069/web/health || echo000)
+HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069/web/health || echo "000")
 DB_SELECTOR_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8069/web/database/selector || echo "000")
 
 if [ "$HEALTH_CODE" -eq 200 ]; then
