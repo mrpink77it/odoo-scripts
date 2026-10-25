@@ -5,7 +5,7 @@
 ![Odoo](https://img.shields.io/badge/Odoo-8.0%20to%2020.0-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Script per l'installazione, l'aggiornamento e l'ottimizzazione di Odoo.
+Script per l'installazione, l'aggiornamento e l'ottimizzazione di Odoo Community Edition.
 
 ---
 
