@@ -1,5 +1,5 @@
 # Odoo Installer
-<img width="4838" height="1690" alt="image" src="https://github.com/user-attachments/assets/077ae61a-7870-41d0-a792-a628596e1e51" />
+<img alt="image" src="https://github.com/user-attachments/assets/077ae61a-7870-41d0-a792-a628596e1e51" />
 
 ![OS](https://img.shields.io/badge/OS-Ubuntu%2022.04%20%7C%2024.04%20%7C%2026.04%20%7C%20Debian%2012%20%7C%2013-blue)
 ![Odoo](https://img.shields.io/badge/Odoo-8.0%20to%2020.0-purple)
