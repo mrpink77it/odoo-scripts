@@ -1,7 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# INSTALLER ODOO + ALL-IN-ONE OCA INDEXER & SYNC (Bare-Metal Ubuntu/Debian)
-# Con supporto per --debug, --help, correzione Locales e Health Check pulito
+# INSTALLER ODOO + OCA ubuntu >= 20 / debian >= 11
 # ==============================================================================
 
 set -e
