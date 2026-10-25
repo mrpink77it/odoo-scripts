@@ -18,30 +18,28 @@ Script di automazione Bash per l'installazione, l'aggiornamento e l'ottimizzazio
 
 ---
 
-## 🚀 1. Script Principale: `install_odoo_oca.sh`
+## `setup.sh`
 
 Gestisce l'intero ciclo di vita dell'installazione, la sincronizzazione dei moduli e gli aggiornamenti di sistema.
 
 ### Funzioni e Logica di Esecuzione
 * **Controllo Installazione Esistente (Porta 8069):**
-  * Rileva se Odoo è già attivo. In caso positivo, richiede se avviare la procedura di aggiornamento completo (`apt dist-upgrade`, stop servizio, sync OCA, aggiornamento core Odoo, esecuzione con `-u all`, visualizzazione log in tempo reale e opzione di riavvio finale).
-* **Configurazione Iniziale di Sistema:**
+  * Rileva se Odoo è già attivo. In caso positivo, richiede se avviare la procedura di aggiornamento completo.
   * Configura forzatamente l'encoding `UTF-8` (`en_US.UTF-8`), gestisce il fuso orario (`tzdata`) e imposta il layout della tastiera.
-* **Auto-Indexer OCA Integrato:**
   * Interroga le API di GitHub per generare automaticamente o leggere il file `oca.txt`, escludendo i repository di unit test, `openupgrade`, `.github` e `OCB`.
 * **Sincronizzazione Moduli e Dipendenze:**
   * Seleziona la versione di Odoo (dalla `8.0` alla `20.0`).
   * Esegue `clone` o `pull` dei repository OCA filtrati per branch, crea automaticamente i link simbolici dei moduli in `custom_addons` e allinea le dipendenze Python leggendo i file `requirements.txt`.
-* **Hardening e Servizi:**
+* **Servizi:**
   * Configura l'auto-tuning iniziale per PostgreSQL e Odoo, genera lo script di backup automatizzato (`odoo_backup.sh`), la rotazione dei log (`logrotate`) e il demone `systemd`.
 * **Health Check & Collaudo Finale:**
   * Verifica lo stato operativo della porta HTTP (`8069`), risponde ai test sulle API web (`/web/health`, `/web/database/selector`) e convalida l'endpoint JSON-RPC.
 
 ---
 
-## ⚡ 2. Script di Ottimizzazione: `odoo_optimizer.sh`
+## `odoo_optimizer.sh`
 
-Script autonomo dedicato all'auto-tuning avanzato delle performance e al benchmarking di PostgreSQL e Odoo.
+Script per benchmarking di PostgreSQL e Odoo.
 
 ### Funzioni e Logica di Esecuzione
 * **Hardware Auto-Tuning Dinamico:**
